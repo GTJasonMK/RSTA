@@ -70,6 +70,13 @@ DEFAULT_CONFIG = {
         "capture_delay_ms": 120,
         "overlay_max_width": 300,
         "overlay_max_height": 0
+    },
+    "llm": {
+        "api_key": "",
+        "base_url": "",
+        "model": "",
+        "max_tokens": 2048,
+        "temperature": 0.7
     }
 }
 
