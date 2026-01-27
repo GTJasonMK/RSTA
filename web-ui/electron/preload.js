@@ -68,6 +68,9 @@ contextBridge.exposeInMainWorld('electron', {
   minimizeApp: () => ipcRenderer.invoke('minimize-app'),
   quitApp: () => ipcRenderer.invoke('quit-app'),
 
+  // 系统通知
+  showNotification: (title, body) => ipcRenderer.invoke('show-notification', { title, body }),
+
   // 监听快捷键事件
   onSwapLanguages: (callback) => {
     const eventKey = 'swap-languages';

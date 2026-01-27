@@ -1088,8 +1088,15 @@ const App = () => {
     }
   }, [baseUrl, loadedModels]);
 
+  // 获取语言名称的辅助函数
+  const getLangName = useCallback((code) => {
+    const lang = LANGUAGES.find(l => l.value === code);
+    return lang ? lang.label : code.toUpperCase();
+  }, []);
+
   // 配置变更处理 - 检查是否需要预加载模型
-  const handleConfigChange = useCallback(async (newConfig) => {
+  const handleConfigChange = useCallback(async (newConfig, options = {}) => {
+    const { isSwap = false, showNotif = false } = options;
     const modelType = newConfig.paddleocr?.model_type || 'mobile';
     const sourceLang = newConfig.source_lang;
     const cacheKey = `${modelType}_${sourceLang}`;
@@ -1097,11 +1104,33 @@ const App = () => {
     // 先更新配置
     setConfig(newConfig);
 
+    // 如果是语言切换，显示通知
+    if (isSwap && showNotif && window.electron?.showNotification) {
+      const fromLang = getLangName(newConfig.target_lang); // 交换后的 target 是原来的 source
+      const toLang = getLangName(newConfig.source_lang);   // 交换后的 source 是原来的 target
+      window.electron.showNotification(
+        'Language Swapped',
+        `${fromLang} → ${toLang}`
+      );
+    }
+
     // 检查是否需要预加载新的 OCR 模型
     if (!loadedModels.has(cacheKey)) {
+      if (showNotif && window.electron?.showNotification) {
+        window.electron.showNotification(
+          'Loading Model',
+          `OCR model for ${getLangName(sourceLang)}...`
+        );
+      }
       await preloadModel(sourceLang, modelType);
+      if (showNotif && window.electron?.showNotification) {
+        window.electron.showNotification(
+          'Model Ready',
+          `OCR model loaded`
+        );
+      }
     }
-  }, [loadedModels, preloadModel]);
+  }, [loadedModels, preloadModel, getLangName]);
 
   // 裁剪图片
   const cropImage = (imageDataUrl, bounds) => {
@@ -1226,7 +1255,7 @@ const App = () => {
         ...configRef.current,
         source_lang: configRef.current.target_lang,
         target_lang: configRef.current.source_lang
-      });
+      }, { isSwap: true, showNotif: true });
     };
     window.electron.onSwapLanguages(handleSwap);
     return () => window.electron.removeOnSwapLanguages(handleSwap);

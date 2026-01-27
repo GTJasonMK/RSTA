@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut, Tray, Menu, Notification } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -373,6 +373,20 @@ ipcMain.handle('minimize-app', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.minimize();
   }
+});
+
+// 显示系统通知
+ipcMain.handle('show-notification', (event, { title, body }) => {
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: title || 'Screen Translate',
+      body: body || '',
+      silent: true
+    });
+    notification.show();
+    return { success: true };
+  }
+  return { success: false, error: 'Notifications not supported' };
 });
 
 // --- Tray ---
