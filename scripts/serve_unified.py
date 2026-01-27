@@ -3,6 +3,7 @@
 
 API 端点：
 - GET  /health          - 健康检查
+- GET  /loading_status  - 模型加载状态（用于前端判断功能是否可用）
 - GET  /models          - 列出可用模型
 - POST /ocr             - OCR 识别（接收 base64 图片）
 - POST /ocr/preload     - 预加载 OCR 模型
@@ -204,6 +205,12 @@ class ServiceState:
         self._translate_lock = threading.Lock()  # 防止并发访问翻译模型
         self._translate_load_lock = threading.Lock()  # 防止并发加载翻译模型
         self._config = None
+        # 加载状态跟踪
+        self.ocr_loading = False  # OCR 模型是否正在加载
+        self.ocr_ready = False  # OCR 模型是否已就绪
+        self.translate_loading = False  # 翻译模型是否正在加载
+        self.translate_ready = False  # 翻译模型是否已就绪
+        self.loading_error = None  # 加载错误信息
 
     def _load_config(self):
         """加载配置文件（使用 rsta.config 确保默认值被合并）"""
@@ -700,14 +707,19 @@ async def lifespan(app):
         try:
             # 预加载 OCR 模型
             if startup_cfg.get("auto_load_ocr", False):
+                STATE.ocr_loading = True
                 model_type = paddle_cfg.get("model_type", "mobile")
                 lang = config.get("source_lang", "en")
                 logger.info(f"[后台] 正在预加载 OCR 模型: {model_type} ({lang})...")
                 try:
                     STATE.load_ocr_engine(model_type, lang)
+                    STATE.ocr_ready = True
                     logger.info(f"[后台] OCR 模型加载完成: {model_type}_{lang}")
                 except Exception as e:
+                    STATE.loading_error = f"OCR 加载失败: {e}"
                     logger.warning(f"[后台] OCR 模型加载失败: {e}")
+                finally:
+                    STATE.ocr_loading = False
 
                 # 加载 preload_ocr 配置中的其他模型
                 preload_ocr_list = unified_cfg.get("preload_ocr", [])
@@ -724,12 +736,22 @@ async def lifespan(app):
 
             # 预加载翻译模型
             if startup_cfg.get("auto_load_translator", False):
+                STATE.translate_loading = True
                 logger.info("[后台] 正在预加载翻译模型...")
-                if STATE.ensure_translate_model():
-                    logger.info(f"[后台] 翻译模型加载完成: {STATE.translate_file}")
-                else:
-                    logger.warning("[后台] 翻译模型加载失败或未找到")
+                try:
+                    if STATE.ensure_translate_model():
+                        STATE.translate_ready = True
+                        logger.info(f"[后台] 翻译模型加载完成: {STATE.translate_file}")
+                    else:
+                        STATE.loading_error = "翻译模型未找到"
+                        logger.warning("[后台] 翻译模型加载失败或未找到")
+                except Exception as e:
+                    STATE.loading_error = f"翻译模型加载失败: {e}"
+                    logger.warning(f"[后台] 翻译模型加载失败: {e}")
+                finally:
+                    STATE.translate_loading = False
         except Exception as e:
+            STATE.loading_error = f"预加载失败: {e}"
             logger.error(f"[后台] 预加载失败: {e}")
 
     # 如果启用了预加载，在后台线程中执行（不阻塞启动）
@@ -782,6 +804,24 @@ def health():
         "translate_file": STATE.translate_file,
         "translate_available": STATE.translate_model is not None,
         "translate_backend": "llama" if STATE.translate_model is not None else None,
+    }
+
+
+@app.get("/loading_status")
+def loading_status():
+    """获取模型加载状态（用于前端判断功能是否可用）"""
+    return {
+        "ocr": {
+            "loading": STATE.ocr_loading,
+            "ready": STATE.ocr_ready or len(STATE.ocr_engines) > 0,
+            "loaded_models": list(STATE.ocr_engines.keys()),
+        },
+        "translate": {
+            "loading": STATE.translate_loading,
+            "ready": STATE.translate_ready or STATE.translate_model is not None,
+            "model_file": STATE.translate_file,
+        },
+        "error": STATE.loading_error,
     }
 
 
@@ -1090,6 +1130,13 @@ def ocr(req: OcrRequest):
     import time
     start_time = time.perf_counter()
 
+    # 检查 OCR 模型是否正在加载中
+    if STATE.ocr_loading:
+        raise HTTPException(
+            status_code=503,
+            detail="OCR 模型正在加载中，请稍候..."
+        )
+
     try:
         image_bytes = base64.b64decode(req.image)
     except Exception as e:
@@ -1118,6 +1165,13 @@ def translate(req: TranslateRequest):
     text = (req.q or req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
+
+    # 检查翻译模型是否正在加载中
+    if STATE.translate_loading:
+        raise HTTPException(
+            status_code=503,
+            detail="翻译模型正在加载中，请稍候..."
+        )
 
     # 确保翻译模型已加载
     if not STATE.ensure_translate_model():
@@ -1159,6 +1213,13 @@ def translate_stream(req: TranslateRequest):
     text = (req.q or req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
+
+    # 检查翻译模型是否正在加载中
+    if STATE.translate_loading:
+        raise HTTPException(
+            status_code=503,
+            detail="翻译模型正在加载中，请稍候..."
+        )
 
     # 确保翻译模型已加载
     if not STATE.ensure_translate_model():
