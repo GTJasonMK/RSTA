@@ -22,36 +22,32 @@
 
 ```mermaid
 graph TB
-    subgraph Frontend["前端 (Electron + React)"]
-        Main["主窗口<br/>Dashboard"]
-        Snipping["截图窗口<br/>Snipper"]
-        Overlay["悬浮窗<br/>Overlay"]
-        Tray["系统托盘"]
+    subgraph Frontend
+        Main[主窗口 Dashboard]
+        Snipping[截图窗口 Snipper]
+        Overlay[悬浮窗 Overlay]
+        Tray[系统托盘]
     end
 
-    subgraph Backend["后端 (Python FastAPI)"]
-        API["REST API<br/>:8092"]
-        subgraph OCR["OCR 引擎"]
-            PaddleOCR["PaddleOCR<br/>PP-OCRv5"]
-        end
-        subgraph MT["翻译引擎"]
-            HYMT["HY-MT1.5<br/>GGUF"]
-        end
+    subgraph Backend
+        API[REST API :8092]
+        PaddleOCR[PaddleOCR PP-OCRv5]
+        HYMT[HY-MT1.5 GGUF]
     end
 
-    subgraph Storage["存储"]
-        Config["config.json"]
-        Models["models/"]
+    subgraph Storage
+        Config[config.json]
+        Models[models/]
     end
 
     Main <--> API
     Snipping --> Main
     Main --> Overlay
     Tray --> Main
-    API --> OCR
-    API --> MT
-    OCR --> Models
-    MT --> Models
+    API --> PaddleOCR
+    API --> HYMT
+    PaddleOCR --> Models
+    HYMT --> Models
     Main --> Config
     API --> Config
 ```
@@ -81,7 +77,7 @@ sequenceDiagram
     loop 流式输出
         B->>T: 翻译文本
         T-->>B: token
-        B-->>R: SSE: token
+        B-->>R: SSE token
         R->>R: 更新悬浮窗
     end
     R-->>U: 显示翻译结果
@@ -91,43 +87,41 @@ sequenceDiagram
 
 ```mermaid
 graph LR
-    subgraph UI["用户界面层"]
-        React["React 18"]
-        Tailwind["Tailwind CSS"]
-        Lucide["Lucide Icons"]
+    subgraph UI Layer
+        React[React 18]
+        Tailwind[Tailwind CSS]
+        Lucide[Lucide Icons]
     end
 
-    subgraph Desktop["桌面应用层"]
-        Electron["Electron 30"]
-        Vite["Vite 5"]
+    subgraph Desktop Layer
+        Electron[Electron 30]
+        Vite[Vite 5]
     end
 
-    subgraph API["API 服务层"]
-        FastAPI["FastAPI"]
-        SSE["SSE 流式传输"]
+    subgraph API Layer
+        FastAPI[FastAPI]
+        SSE[SSE Stream]
     end
 
-    subgraph AI["AI 模型层"]
-        Paddle["PaddleOCR<br/>PP-OCRv5"]
-        Llama["llama.cpp<br/>HY-MT1.5 GGUF"]
+    subgraph AI Layer
+        Paddle[PaddleOCR PP-OCRv5]
+        Llama[llama.cpp HY-MT1.5]
     end
 
-    UI --> Desktop
-    Desktop --> API
-    API --> AI
+    React --> Electron
+    Electron --> FastAPI
+    FastAPI --> Paddle
+    FastAPI --> Llama
 ```
 
 ## 数据流
 
 ```mermaid
-flowchart LR
+graph LR
     A[屏幕截图] -->|Base64| B[图像裁剪]
     B -->|PNG| C[OCR 识别]
     C -->|文本| D[翻译处理]
     D -->|SSE Stream| E[悬浮窗显示]
-
-    style A fill:#f9f,stroke:#333
-    style E fill:#9f9,stroke:#333
 ```
 
 ## 系统要求
@@ -146,8 +140,6 @@ graph LR
     A[克隆仓库] --> B[安装 Python 依赖]
     B --> C[安装前端依赖]
     C --> D[一键启动]
-
-    style D fill:#9f9,stroke:#333
 ```
 
 ### 1. 克隆仓库
@@ -201,14 +193,11 @@ python start.py
 
 ```mermaid
 graph LR
-    A["按 Ctrl+Alt+Q"] --> B["框选区域"]
-    B --> C["自动 OCR"]
-    C --> D["自动翻译"]
-    D --> E["悬浮窗显示"]
-    E --> F["按 Esc 关闭"]
-
-    style A fill:#ffeb3b,stroke:#333
-    style E fill:#4caf50,stroke:#333,color:#fff
+    A[按 Ctrl+Alt+Q] --> B[框选区域]
+    B --> C[自动 OCR]
+    C --> D[自动翻译]
+    D --> E[悬浮窗显示]
+    E --> F[按 Esc 关闭]
 ```
 
 ### 基本操作
@@ -253,23 +242,23 @@ RSTA/
 ```mermaid
 graph TD
     subgraph Electron
-        main.js --> preload.js
+        mainjs[main.js] --> preloadjs[preload.js]
     end
 
     subgraph React
-        App.jsx --> main.jsx
+        appjsx[App.jsx] --> mainjsx[main.jsx]
     end
 
     subgraph Python
-        start.py --> serve_unified.py
-        serve_unified.py --> ocr.py
-        serve_unified.py --> translators.py
-        ocr.py --> config.py
-        translators.py --> config.py
+        startpy[start.py] --> serveunified[serve_unified.py]
+        serveunified --> ocrpy[ocr.py]
+        serveunified --> translatorspy[translators.py]
+        ocrpy --> configpy[config.py]
+        translatorspy --> configpy
     end
 
-    preload.js -.->|IPC| App.jsx
-    App.jsx -.->|HTTP| serve_unified.py
+    preloadjs -.->|IPC| appjsx
+    appjsx -.->|HTTP| serveunified
 ```
 
 ## 配置说明
@@ -294,29 +283,32 @@ graph TD
 ### 配置项说明
 
 ```mermaid
-mindmap
-  root((config.json))
-    快捷键
-      hotkey
-      swap_hotkey
-      close_overlay_hotkey
-    语言设置
-      source_lang
-      target_lang
-    OCR 设置
-      ocr_engine
-      paddleocr
-        model_type
-        use_gpu
-        text_rec_score_thresh
-    翻译设置
-      translator
-      libretranslate
-      unified_service
-    界面设置
-      ui
-        overlay_max_width
-        capture_delay_ms
+graph TD
+    Root[config.json] --> HK[快捷键]
+    Root --> Lang[语言设置]
+    Root --> OCR[OCR 设置]
+    Root --> Trans[翻译设置]
+    Root --> UIConf[界面设置]
+
+    HK --> hotkey
+    HK --> swap_hotkey
+    HK --> close_overlay_hotkey
+
+    Lang --> source_lang
+    Lang --> target_lang
+
+    OCR --> ocr_engine
+    OCR --> paddleocr
+    paddleocr --> model_type
+    paddleocr --> use_gpu
+    paddleocr --> text_rec_score_thresh
+
+    Trans --> translator
+    Trans --> libretranslate
+    Trans --> unified_service
+
+    UIConf --> overlay_max_width
+    UIConf --> capture_delay_ms
 ```
 
 ### 语言代码
@@ -339,11 +331,9 @@ graph TD
     A --> C[启动 Vite]
     B --> D{后端就绪?}
     C --> E{Vite 就绪?}
-    D -->|Yes| F[等待]
+    D -->|Yes| F[等待全部就绪]
     E -->|Yes| F
     F --> G[启动 Electron]
-
-    style G fill:#4caf50,stroke:#333,color:#fff
 ```
 
 ### 单独启动各服务
@@ -395,13 +385,10 @@ pie title 技术栈占比
 
 ```mermaid
 graph LR
-    subgraph Endpoints
-        A["/health"] --> A1["GET 健康检查"]
-        B["/ocr"] --> B1["POST OCR 识别"]
-        C["/translate"] --> C1["POST 翻译"]
-        D["/translate_stream"] --> D1["POST 流式翻译"]
-        E["/config"] --> E1["GET/POST 配置"]
-    end
+    A["/health GET"] --- B["/ocr POST"]
+    B --- C["/translate POST"]
+    C --- D["/translate_stream POST"]
+    D --- E["/config GET/POST"]
 ```
 
 | 接口 | 方法 | 描述 |
@@ -451,7 +438,7 @@ A: OCR 模型约需 1-2GB，翻译模型约需 3-4GB。建议使用 8GB 以上�
 ```mermaid
 gantt
     title RSTA 开发路线图
-    dateFormat  YYYY-MM
+    dateFormat YYYY-MM
     section 已完成
     基础框架搭建           :done, 2024-01, 2024-02
     OCR 集成               :done, 2024-02, 2024-03
