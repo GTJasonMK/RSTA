@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     },
     "model_dir": "models",
     "paddleocr": {
-        "lang": "en",  # 与 source_lang 保持一致
+        "lang": "en",
         "ocr_version": "PP-OCRv5",
         "model_type": "mobile",
         "use_textline_orientation": True,
@@ -33,43 +33,27 @@ DEFAULT_CONFIG = {
         "box_thresh": 0.3,
         "unclip_ratio": 1.6,
         "max_side": 1800,
-        "min_side_for_upscale": 100  # 小图片放大阈值
+        "min_side_for_upscale": 100
     },
-    "tesseract_cmd": "",
     "local_service": {
-        "enabled": True,
-        "type": "hymt_gguf",
         "host": "127.0.0.1",
         "port": 8092,
         "model_repo": "tencent/HY-MT1.5-1.8B-GGUF",
-        "quant": "Q6_K",
-        "auto_download": False,
-        "auto_install": True,
-        "venv": ".venv-hymt-gguf",
-        "script_win": "scripts/deploy_hymt_gguf.ps1",
-        "script_unix": "scripts/deploy_hymt_gguf.sh"
+        "quant": "Q6_K"
     },
     "unified_service": {
-        "enabled": False,
         "host": "127.0.0.1",
         "port": 8092,
         "timeout": 30,
         "ocr_model_type": "mobile",
-        "preload_ocr": [],
-        "script_win": "scripts/deploy_unified.ps1",
-        "script_unix": "scripts/deploy_unified.sh"
+        "preload_ocr": []
     },
     "startup": {
-        "auto_load_ocr": False,  # 默认禁用，按需加载更快启动
-        "auto_load_translator": False,  # 默认禁用，按需加载更快启动
-        "auto_start_unified_service": False,
-        "auto_start_local_service": False
+        "auto_load_ocr": False,
+        "auto_load_translator": False
     },
     "ui": {
-        "poll_ms": 100,
-        "capture_delay_ms": 120,
-        "overlay_max_width": 300,
-        "overlay_max_height": 0
+        "overlay_max_width": 300
     },
     "llm": {
         "api_key": "",

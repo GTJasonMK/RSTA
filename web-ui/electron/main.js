@@ -32,7 +32,35 @@ const CONFIG = {
   serverPort: 8092,
   pythonScript: path.join(__dirname, '../../scripts/serve_unified.py'),
   pythonExecutable: getBackendPython()
-}; 
+};
+
+// 读取项目配置文件
+function loadProjectConfig() {
+  const configPath = path.join(__dirname, '../../config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, 'utf8');
+      return JSON.parse(content);
+    }
+  } catch (e) {
+    console.error('Failed to load config.json:', e.message);
+  }
+  // 返回默认配置
+  return {
+    hotkey: 'Ctrl+Alt+Q',
+    swap_hotkey: 'Ctrl+Alt+A',
+    close_overlay_hotkey: 'Escape'
+  };
+}
+
+// 将配置文件格式的快捷键转换为 Electron 格式
+function convertHotkeyToElectron(hotkey) {
+  if (!hotkey) return null;
+  // 将 Ctrl 替换为 CommandOrControl 以支持 Mac
+  return hotkey
+    .replace(/Ctrl/gi, 'CommandOrControl')
+    .replace(/\+/g, '+');
+} 
 
 function createMainWindow() {
   console.log('Creating main window...');
@@ -243,7 +271,14 @@ async function startPythonServerIfNeeded() {
 
 // 获取配置供渲染进程使用
 ipcMain.handle('get-config', () => {
-  return { serverPort: CONFIG.serverPort };
+  const projectConfig = loadProjectConfig();
+  return {
+    serverPort: CONFIG.serverPort,
+    ui: projectConfig.ui || {},
+    hotkey: projectConfig.hotkey,
+    swap_hotkey: projectConfig.swap_hotkey,
+    close_overlay_hotkey: projectConfig.close_overlay_hotkey
+  };
 });
 
 // --- IPC Handlers ---
@@ -666,20 +701,60 @@ app.whenReady().then(async () => {
   createSnippingWindow();
   createTray();
 
-  // 快捷键：Ctrl+Alt+Q = 截图
-  globalShortcut.register('CommandOrControl+Alt+Q', () => {
-    if (snippingWindow && !snippingWindow.isDestroyed() && !snippingWindow.isVisible()) {
-      snippingWindow.show();
-      snippingWindow.focus();
-    }
-  });
+  // 从配置文件读取快捷键
+  const projectConfig = loadProjectConfig();
 
-  // 快捷键：Ctrl+Alt+A = 互换语言
-  globalShortcut.register('CommandOrControl+Alt+A', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('swap-languages');
+  // 注册截图快捷键
+  const captureHotkey = convertHotkeyToElectron(projectConfig.hotkey || 'Ctrl+Alt+Q');
+  if (captureHotkey) {
+    const registered = globalShortcut.register(captureHotkey, () => {
+      if (snippingWindow && !snippingWindow.isDestroyed() && !snippingWindow.isVisible()) {
+        snippingWindow.show();
+        snippingWindow.focus();
+      }
+    });
+    if (registered) {
+      console.log('Registered capture hotkey:', captureHotkey);
+    } else {
+      console.warn('Failed to register capture hotkey:', captureHotkey);
     }
-  });
+  }
+
+  // 注册互换语言快捷键
+  const swapHotkey = convertHotkeyToElectron(projectConfig.swap_hotkey || 'Ctrl+Alt+A');
+  if (swapHotkey) {
+    const registered = globalShortcut.register(swapHotkey, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('swap-languages');
+      }
+    });
+    if (registered) {
+      console.log('Registered swap hotkey:', swapHotkey);
+    } else {
+      console.warn('Failed to register swap hotkey:', swapHotkey);
+    }
+  }
+
+  // 注册关闭浮窗快捷键
+  const closeOverlayHotkey = convertHotkeyToElectron(projectConfig.close_overlay_hotkey);
+  if (closeOverlayHotkey && closeOverlayHotkey.toLowerCase() !== 'escape') {
+    // Escape 键在浮窗内部处理，这里只注册非 Escape 的全局快捷键
+    const registered = globalShortcut.register(closeOverlayHotkey, () => {
+      // 关闭所有浮窗
+      overlayWindows.forEach((win, id) => {
+        if (win && !win.isDestroyed()) {
+          win.close();
+        }
+      });
+      overlayWindows.clear();
+      currentOverlayId = null;
+    });
+    if (registered) {
+      console.log('Registered close overlay hotkey:', closeOverlayHotkey);
+    } else {
+      console.warn('Failed to register close overlay hotkey:', closeOverlayHotkey);
+    }
+  }
 });
 
 app.on('will-quit', () => {

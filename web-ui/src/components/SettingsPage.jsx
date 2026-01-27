@@ -233,9 +233,6 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
 
                 {config.ocr_engine === 'tesseract' && (
                   <SettingGroup title="Tesseract 设置">
-                    <SettingRow label="Tesseract 路径" description="tesseract.exe 的完整路径">
-                      <Input value={config.tesseract_cmd || ''} onChange={(v) => updateConfig('tesseract_cmd', v)} className="w-64" />
-                    </SettingRow>
                     <SettingRow label="OCR 语言代码" description="如 chi_sim, eng">
                       <Input value={config.ocr_lang || ''} onChange={(v) => updateConfig('ocr_lang', v)} className="w-32" />
                     </SettingRow>
@@ -259,9 +256,6 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
                 </SettingGroup>
 
                 <SettingGroup title="本地翻译服务">
-                  <SettingRow label="启用">
-                    <Toggle checked={config.local_service?.enabled ?? false} onChange={(v) => updateConfig('local_service.enabled', v)} />
-                  </SettingRow>
                   <SettingRow label="量化级别" description="Q6_K 推荐">
                     <Select
                       value={config.local_service?.quant || 'Q6_K'}
@@ -416,17 +410,8 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
             {activeTab === 'ui' && (
               <>
                 <SettingGroup title="界面设置">
-                  <SettingRow label="轮询间隔 (ms)" description="状态检查频率">
-                    <Input type="number" value={config.ui?.poll_ms || 100} onChange={(v) => updateConfig('ui.poll_ms', parseInt(v))} className="w-24" />
-                  </SettingRow>
-                  <SettingRow label="截图延迟 (ms)" description="截图前的等待时间">
-                    <Input type="number" value={config.ui?.capture_delay_ms || 120} onChange={(v) => updateConfig('ui.capture_delay_ms', parseInt(v))} className="w-24" />
-                  </SettingRow>
                   <SettingRow label="浮窗最大宽度" description="0 表示不限制">
-                    <Input type="number" value={config.ui?.overlay_max_width || 520} onChange={(v) => updateConfig('ui.overlay_max_width', parseInt(v))} className="w-24" />
-                  </SettingRow>
-                  <SettingRow label="浮窗最大高度" description="0 表示不限制">
-                    <Input type="number" value={config.ui?.overlay_max_height || 0} onChange={(v) => updateConfig('ui.overlay_max_height', parseInt(v))} className="w-24" />
+                    <Input type="number" value={config.ui?.overlay_max_width || 300} onChange={(v) => updateConfig('ui.overlay_max_width', parseInt(v))} className="w-24" />
                   </SettingRow>
                 </SettingGroup>
 

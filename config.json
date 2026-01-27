@@ -29,40 +29,31 @@
     "max_side": 1800,
     "min_side_for_upscale": 100
   },
-  "tesseract_cmd": "",
   "local_service": {
-    "enabled": true,
-    "type": "hymt_gguf",
     "host": "127.0.0.1",
     "port": 8092,
     "model_repo": "tencent/HY-MT1.5-1.8B-GGUF",
-    "quant": "Q6_K",
-    "auto_download": false,
-    "auto_install": true,
-    "venv": ".venv-hymt-gguf",
-    "script_win": "scripts/deploy_hymt_gguf.ps1",
-    "script_unix": "scripts/deploy_hymt_gguf.sh"
+    "quant": "Q6_K"
   },
   "unified_service": {
-    "enabled": false,
     "host": "127.0.0.1",
     "port": 8092,
     "timeout": 30,
     "ocr_model_type": "mobile",
-    "preload_ocr": [],
-    "script_win": "scripts/deploy_unified.ps1",
-    "script_unix": "scripts/deploy_unified.sh"
+    "preload_ocr": []
   },
   "startup": {
     "auto_load_ocr": true,
-    "auto_load_translator": true,
-    "auto_start_unified_service": false,
-    "auto_start_local_service": false
+    "auto_load_translator": true
   },
   "ui": {
-    "poll_ms": 100,
-    "capture_delay_ms": 120,
-    "overlay_max_width": 300,
-    "overlay_max_height": 0
+    "overlay_max_width": 300
+  },
+  "llm": {
+    "api_key": "",
+    "base_url": "",
+    "model": "",
+    "max_tokens": 2048,
+    "temperature": 0.7
   }
 }
