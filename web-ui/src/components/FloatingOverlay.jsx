@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Loader2, ChevronDown, ChevronUp, BookOpen, Eye, EyeOff } from 'lucide-react';
+import SimpleMarkdown from './SimpleMarkdown';
 
 // 各区域最大高度配置
 const MAX_HEIGHT_TRANSLATE = 150;
@@ -247,16 +248,16 @@ const FloatingOverlay = () => {
           {/* 分析结果 */}
           {showAnalysis && (
             <div
-              className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-300 text-xs select-text cursor-text whitespace-pre-wrap overflow-y-auto"
+              className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-300 text-xs select-text cursor-text overflow-y-auto"
               style={{ maxHeight: MAX_HEIGHT_ANALYSIS }}
             >
               {analyzing ? (
                 <div className="flex items-start gap-2 text-stone-400">
                   <Loader2 size={12} className="animate-spin flex-shrink-0 mt-0.5" />
-                  <span>{analysisText || 'Analyzing...'}</span>
+                  <SimpleMarkdown content={analysisText || 'Analyzing...'} />
                 </div>
               ) : (
-                analysisText || 'No analysis result'
+                <SimpleMarkdown content={analysisText || 'No analysis result'} />
               )}
             </div>
           )}
