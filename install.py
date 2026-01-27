@@ -199,7 +199,7 @@ def create_venv_and_install():
             "uv", "pip", "install",
             "-r", str(requirements_file),
             "--python", str(venv_python)
-        ], shell=True)
+        ], shell=True, capture=False)
         log("Python 依赖安装成功", "SUCCESS")
     else:
         log("未找到 requirements.txt，跳过 Python 依赖安装", "WARNING")
