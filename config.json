@@ -27,7 +27,8 @@
     "text_rec_score_thresh": 0.3,
     "box_thresh": 0.3,
     "unclip_ratio": 1.6,
-    "max_side": 1800
+    "max_side": 1800,
+    "min_side_for_upscale": 100
   },
   "tesseract_cmd": "",
   "local_service": {

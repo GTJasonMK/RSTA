@@ -342,26 +342,44 @@ class ServiceState:
 
             ocr_lang = OCR_LANG_MAP.get(lang, "en")
 
-            # PaddleOCR 配置（禁用 MKLDNN 避免 PIR 错误，但会较慢）
+            # 读取配置文件中的 paddleocr 参数
+            config = self._load_config()
+            paddle_cfg = config.get("paddleocr", {})
+
+            # PaddleOCR 配置
             cpu_count = os.cpu_count() or 4
             kwargs = {
                 "lang": ocr_lang,
-                "device": "cpu",
+                "device": "gpu" if paddle_cfg.get("use_gpu", False) else "cpu",
                 "enable_mkldnn": False,  # 禁用以避免 PIR 兼容问题
                 "use_doc_preprocessor": False,
-                "use_textline_orientation": False,
+                "use_textline_orientation": paddle_cfg.get("use_textline_orientation", True),
                 "cpu_threads": max(cpu_count - 1, 1),
+                "text_rec_score_thresh": float(paddle_cfg.get("text_rec_score_thresh", 0.3)),
+                "text_det_box_thresh": float(paddle_cfg.get("box_thresh", 0.3)),
+                "text_det_unclip_ratio": float(paddle_cfg.get("unclip_ratio", 1.6)),
             }
 
-            # 根据模型类型指定模型名称
-            if model_type == "mobile":
-                kwargs["text_detection_model_name"] = "PP-OCRv5_mobile_det"
-                kwargs["text_recognition_model_name"] = "PP-OCRv5_mobile_rec"
-            else:  # server
-                kwargs["text_detection_model_name"] = "PP-OCRv5_server_det"
-                kwargs["text_recognition_model_name"] = "PP-OCRv5_server_rec"
+            # 检查是否有对应的 PP-OCRv5 模型已下载，只有下载了才指定模型名称
+            # 否则让 PaddleOCR 使用默认模型
+            paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
+            official_models_dir = paddlex_home / "official_models" if paddlex_home.exists() else None
 
-            logger.info(f"正在加载 OCR 模型: {model_type} ({kwargs.get('text_detection_model_name')})")
+            if model_type == "mobile":
+                det_model = "PP-OCRv5_mobile_det"
+                rec_model = "PP-OCRv5_mobile_rec"
+            else:  # server
+                det_model = "PP-OCRv5_server_det"
+                rec_model = "PP-OCRv5_server_rec"
+
+            # 只有模型目录存在时才指定模型名称
+            if official_models_dir and (official_models_dir / det_model).exists():
+                kwargs["text_detection_model_name"] = det_model
+                kwargs["text_recognition_model_name"] = rec_model
+                logger.info(f"使用指定 OCR 模型: {det_model}")
+            else:
+                logger.info(f"OCR 模型 {det_model} 未找到，使用 PaddleOCR 默认模型")
+
             engine = self._safe_create_ocr(PaddleOCR, kwargs)
             engine._backend = "paddleocr"  # 标记后端类型
             self.ocr_engines[cache_key] = engine
@@ -457,13 +475,17 @@ def do_ocr(image_bytes: bytes, model_type: str, lang: str) -> str:
 
     engine = STATE.load_ocr_engine(model_type, lang)
 
+    # 读取配置
+    config = STATE._load_config()
+    paddle_cfg = config.get("paddleocr", {})
+
     # 解码图片
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     width, height = image.size
 
     # 对于太小的图片，进行放大以提高 OCR 识别率
-    # 最小边长阈值：小于此值的图片将被放大
-    MIN_SIDE_FOR_UPSCALE = int(os.getenv("OCR_MIN_SIDE", "100"))
+    # 使用配置文件中的值，默认 100
+    MIN_SIDE_FOR_UPSCALE = int(paddle_cfg.get("min_side_for_upscale", 100))
     if min(width, height) < MIN_SIDE_FOR_UPSCALE:
         # 计算放大比例，使最小边达到阈值
         scale = MIN_SIDE_FOR_UPSCALE / min(width, height)
@@ -479,8 +501,8 @@ def do_ocr(image_bytes: bytes, model_type: str, lang: str) -> str:
         logger.warning(f"图片尺寸过小 ({width}x{height})，无法进行 OCR 识别")
         return ""
 
-    # 限制图片最大边长以加速 OCR（大图片会显著降低速度）
-    MAX_SIDE = int(os.getenv("OCR_MAX_SIDE", "640"))
+    # 限制图片最大边长（使用配置文件中的值，默认 1800）
+    MAX_SIDE = int(paddle_cfg.get("max_side", 1800))
     if max(width, height) > MAX_SIDE:
         scale = MAX_SIDE / max(width, height)
         new_width = int(width * scale)

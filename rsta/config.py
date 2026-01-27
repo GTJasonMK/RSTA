@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     },
     "model_dir": "models",
     "paddleocr": {
-        "lang": "ch",
+        "lang": "en",  # 与 source_lang 保持一致
         "ocr_version": "PP-OCRv5",
         "model_type": "mobile",
         "preload_models": [],
@@ -33,15 +33,17 @@ DEFAULT_CONFIG = {
         "text_rec_score_thresh": 0.3,
         "box_thresh": 0.3,
         "unclip_ratio": 1.6,
-        "max_side": 1800
+        "max_side": 1800,
+        "min_side_for_upscale": 100  # 小图片放大阈值
     },
     "tesseract_cmd": "",
     "local_service": {
-        "enabled": False,
+        "enabled": True,
         "type": "hymt_gguf",
         "host": "127.0.0.1",
         "port": 8092,
         "quant": "Q6_K",
+        "auto_download": False,
         "auto_install": True,
         "venv": ".venv-hymt-gguf",
         "script_win": "scripts/deploy_hymt_gguf.ps1",
@@ -66,7 +68,7 @@ DEFAULT_CONFIG = {
     "ui": {
         "poll_ms": 100,
         "capture_delay_ms": 120,
-        "overlay_max_width": 520,
+        "overlay_max_width": 300,
         "overlay_max_height": 0
     }
 }

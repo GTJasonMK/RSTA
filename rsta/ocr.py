@@ -152,6 +152,7 @@ class PaddleOcrEngine:
         if not self.debug_capture_dir.is_absolute():
             self.debug_capture_dir = CONFIG_PATH.parent / self.debug_capture_dir
         self.max_side = int(paddle_cfg.get("max_side", 1800))
+        self.min_side_for_upscale = int(paddle_cfg.get("min_side_for_upscale", 100))
 
         # 检查是否允许自动下载
         auto_download = bool(paddle_cfg.get("auto_download", False))
@@ -201,14 +202,26 @@ class PaddleOcrEngine:
 
         set_if("lang", lang)
         set_if("ocr_version", paddle_cfg.get("ocr_version", "PP-OCRv5"))
+
         # 支持指定 mobile/server 模型变体
         model_type = paddle_cfg.get("model_type", "mobile")  # "mobile" 或 "server"
+
+        # 检查是否有对应的 PP-OCRv5 模型已下载，只有下载了才指定模型名称
+        official_models_dir = paddlex_home / "official_models"
         if model_type == "mobile":
-            set_if("text_detection_model_name", paddle_cfg.get("text_detection_model_name", "PP-OCRv5_mobile_det"))
-            set_if("text_recognition_model_name", paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_mobile_rec"))
+            det_model = paddle_cfg.get("text_detection_model_name", "PP-OCRv5_mobile_det")
+            rec_model = paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_mobile_rec")
         else:  # server
-            set_if("text_detection_model_name", paddle_cfg.get("text_detection_model_name", "PP-OCRv5_server_det"))
-            set_if("text_recognition_model_name", paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_server_rec"))
+            det_model = paddle_cfg.get("text_detection_model_name", "PP-OCRv5_server_det")
+            rec_model = paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_server_rec")
+
+        # 只有模型目录存在时才指定模型名称，否则使用 PaddleOCR 默认模型
+        if official_models_dir.exists() and (official_models_dir / det_model).exists():
+            set_if("text_detection_model_name", det_model)
+            set_if("text_recognition_model_name", rec_model)
+            print(f"使用指定 OCR 模型: {det_model}")
+        else:
+            print(f"OCR 模型 {det_model} 未找到，使用 PaddleOCR 默认模型")
         if "device" in allowed:
             device = "gpu" if bool(paddle_cfg.get("use_gpu", False)) else "cpu"
             set_if("device", device)
@@ -246,15 +259,30 @@ class PaddleOcrEngine:
         if self.debug_capture:
             self.save_debug_images(image)
         rgb = image.convert("RGB")
-        # PaddleOCR C++ 推理层无法处理过小的图片，会导致 vector<bool> subscript 越界
         width, height = rgb.size
+
+        # 对于太小的图片，进行放大以提高 OCR 识别率（使用配置值）
+        MIN_SIDE_FOR_UPSCALE = self.min_side_for_upscale
+        if min(width, height) < MIN_SIDE_FOR_UPSCALE:
+            scale = MIN_SIDE_FOR_UPSCALE / min(width, height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            rgb = rgb.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            if self.debug:
+                print(f"[OCR] 图片放大: {width}x{height} -> {new_width}x{new_height}")
+            width, height = new_width, new_height
+
+        # PaddleOCR C++ 推理层无法处理过小的图片，会导致 vector<bool> subscript 越界
         if width < 32 or height < 32:
             return ""
+
+        # 限制最大边长
         if self.max_side:
             scale = min(self.max_side / max(width, height), 1.0)
             if scale < 1.0:
                 target = (int(width * scale), int(height * scale))
-                rgb = rgb.resize(target, Image.Resampling.BICUBIC)
+                rgb = rgb.resize(target, Image.Resampling.LANCZOS)
+
         img = self.np.array(rgb)[:, :, ::-1].copy()
         method = "predict" if hasattr(self.ocr, "predict") else "ocr"
         result = self._infer(img, method)
