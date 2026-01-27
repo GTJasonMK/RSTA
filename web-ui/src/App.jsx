@@ -938,7 +938,10 @@ const FloatingOverlay = () => {
         style={{ width: 'max-content', minWidth: 60, maxWidth }}
       >
       {status === 'processing' ? (
-        <span className="text-stone-400">...</span>
+        <div className="flex items-center gap-2 text-stone-400">
+          <Loader2 size={14} className="animate-spin" />
+          <span>Translating...</span>
+        </div>
       ) : (
         <>
           <span className="electron-no-drag no-drag block leading-snug select-text cursor-text" style={{ wordBreak: 'break-word' }}>{text}</span>
