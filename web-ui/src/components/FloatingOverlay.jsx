@@ -166,9 +166,17 @@ const FloatingOverlay = () => {
       `}</style>
       <div
         ref={containerRef}
-        className="electron-drag bg-stone-900/90 text-white text-sm px-2 py-1 rounded shadow-lg cursor-move"
+        className="electron-drag relative bg-stone-900/90 text-white text-sm px-2 py-1 pr-5 rounded shadow-lg cursor-move"
         style={{ width: 'max-content', minWidth: 60, maxWidth }}
       >
+      {/* 关闭按钮 - 固定右上角 */}
+      <button
+        onClick={() => window.electron.closeOverlay()}
+        className="electron-no-drag absolute top-1 right-1 w-4 h-4 flex items-center justify-center text-stone-400 hover:text-white"
+        title="关闭"
+      >
+        <X size={10} />
+      </button>
       {/* 根据状态显示不同内容 */}
       {(status === 'processing' || status === 'ocr' || status === 'translating' ||
         status === 'ocr_loading' || status === 'translate_loading') ? (
@@ -186,55 +194,43 @@ const FloatingOverlay = () => {
         <span className="text-red-400">{text || 'Error occurred'}</span>
       ) : (
         <>
-          {/* 翻译结果区域 */}
-          <div className="flex items-start gap-1">
-            <div
-              className="electron-no-drag no-drag flex-1 leading-snug select-text cursor-text overflow-y-auto"
-              style={{ wordBreak: 'break-word', maxHeight: MAX_HEIGHT_TRANSLATE }}
-            >
-              {text}
-            </div>
-            {/* 按钮组 */}
-            <div className="electron-no-drag flex flex-col gap-0.5 flex-shrink-0">
-              <button
-                onClick={() => window.electron.closeOverlay()}
-                className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-white"
-                title="关闭"
-              >
-                <X size={10} />
-              </button>
-              {/* 解析按钮 - 只在没有分析结果时显示 */}
+          {/* 翻译结果 + 功能按钮（同一行） */}
+          <div
+            className="electron-no-drag no-drag leading-snug select-text cursor-text overflow-y-auto"
+            style={{ wordBreak: 'break-word', maxHeight: MAX_HEIGHT_TRANSLATE }}
+          >
+            <span>{text}</span>
+            {/* 功能按钮 - 跟在文本后面 */}
+            <span className="inline-flex items-center gap-0.5 ml-1 align-middle">
               {!analysisText && (
                 <button
                   onClick={handleAnalyze}
                   disabled={analyzing}
-                  className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-amber-400 disabled:opacity-50"
+                  className="electron-no-drag w-4 h-4 inline-flex items-center justify-center text-stone-500 hover:text-amber-400 disabled:opacity-50"
                   title="解析语法词汇"
                 >
                   <BookOpen size={10} />
                 </button>
               )}
-              {/* 展开/收起分析结果按钮 */}
               {analysisText && (
                 <button
                   onClick={() => setShowAnalysis(!showAnalysis)}
-                  className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-amber-400"
+                  className="electron-no-drag w-4 h-4 inline-flex items-center justify-center text-stone-500 hover:text-amber-400"
                   title={showAnalysis ? '收起分析' : '展开分析'}
                 >
                   {showAnalysis ? <EyeOff size={10} /> : <Eye size={10} />}
                 </button>
               )}
-              {/* 显示原文按钮 */}
               {ocrText && (
                 <button
                   onClick={() => setShowOcr(!showOcr)}
-                  className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-white"
+                  className="electron-no-drag w-4 h-4 inline-flex items-center justify-center text-stone-500 hover:text-white"
                   title={showOcr ? '收起原文' : '展开原文'}
                 >
                   {showOcr ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                 </button>
               )}
-            </div>
+            </span>
           </div>
           {/* 原文 */}
           {showOcr && ocrText && (
