@@ -137,9 +137,8 @@ graph LR
 
 ```mermaid
 graph LR
-    A[克隆仓库] --> B[安装 Python 依赖]
-    B --> C[安装前端依赖]
-    C --> D[一键启动]
+    A[克隆仓库] --> B[运行安装脚本]
+    B --> C[一键启动]
 ```
 
 ### 1. 克隆仓库
@@ -149,26 +148,57 @@ git clone https://github.com/your-username/RSTA.git
 cd RSTA
 ```
 
-### 2. 安装 Python 依赖
+### 2. 一键安装依赖
 
-```bash
-# 创建虚拟环境 (推荐)
-python -m venv .venv-hymt-gguf
-.venv-hymt-gguf\Scripts\activate  # Windows
+使用 [uv](https://github.com/astral-sh/uv) 进行快速包管理（比 pip 快 10-100 倍）：
 
-# 安装依赖
-pip install -r requirements.txt
+**Windows (PowerShell):**
+```powershell
+.\install.ps1
 ```
 
-### 3. 安装前端依赖
+**Linux / macOS:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+**或使用 Python 脚本（跨平台）:**
+```bash
+python install.py
+```
+
+> 安装脚本会自动：
+> - 检查并安装 uv
+> - 创建 Python 虚拟环境
+> - 安装 Python 依赖
+> - 安装前端 npm 依赖
+
+<details>
+<summary>手动安装（不使用 uv）</summary>
 
 ```bash
+# 创建虚拟环境
+python -m venv .venv-hymt-gguf
+
+# 激活虚拟环境
+# Windows:
+.venv-hymt-gguf\Scripts\activate
+# Linux/macOS:
+source .venv-hymt-gguf/bin/activate
+
+# 安装 Python 依赖
+pip install -r requirements.txt
+
+# 安装前端依赖
 cd web-ui
 npm install
 cd ..
 ```
 
-### 4. 一键启动
+</details>
+
+### 3. 一键启动
 
 ```bash
 python start.py
