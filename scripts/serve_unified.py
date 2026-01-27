@@ -207,6 +207,7 @@ class ServiceState:
         self.translate_file = None
         self._ocr_lock = threading.Lock()  # 防止并发加载 OCR 模型
         self._translate_lock = threading.Lock()  # 防止并发访问翻译模型
+        self._translate_load_lock = threading.Lock()  # 防止并发加载翻译模型
         self._config = None
 
     def _load_config(self):
@@ -219,6 +220,28 @@ class ServiceState:
             else:
                 self._config = {}
         return self._config
+
+    def ensure_translate_model(self):
+        """确保翻译模型已加载，如果未加载则尝试加载"""
+        if self.translate_model is not None:
+            return True
+
+        with self._translate_load_lock:
+            # 双重检查
+            if self.translate_model is not None:
+                return True
+
+            logger.info("正在加载翻译模型...")
+            model, repo, filename = load_translate_model()
+            if model is not None:
+                self.translate_model = model
+                self.translate_repo = repo
+                self.translate_file = filename
+                logger.info(f"翻译模型加载完成: {filename}")
+                return True
+            else:
+                logger.warning("翻译模型加载失败或未找到")
+                return False
 
     def get_ocr_engine(self, model_type: str, lang: str = "en"):
         cache_key = f"{model_type}_{lang}"
@@ -992,39 +1015,39 @@ def translate(req: TranslateRequest):
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
 
-    # 优先使用本地模型
-    if STATE.translate_model is not None:
-        prompt = build_prompt(req.source, req.target, text)
+    # 确保翻译模型已加载
+    if not STATE.ensure_translate_model():
+        raise HTTPException(status_code=503, detail="翻译模型未找到，请先在设置中下载翻译模型")
 
-        def do_inference():
-            # 使用锁防止并发访问，llama-cpp-python 不是线程安全的
-            with STATE._translate_lock:
-                return STATE.translate_model.create_completion(
-                    prompt=prompt,
-                    max_tokens=MAX_NEW_TOKENS,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    top_k=TOP_K,
-                    repeat_penalty=REPEAT_PENALTY,
-                    echo=False,
-                )
+    prompt = build_prompt(req.source, req.target, text)
 
-        try:
-            future = _executor.submit(do_inference)
-            result = future.result(timeout=TRANSLATE_TIMEOUT)
-            translated = result["choices"][0]["text"].strip()
+    def do_inference():
+        # 使用锁防止并发访问，llama-cpp-python 不是线程安全的
+        with STATE._translate_lock:
+            return STATE.translate_model.create_completion(
+                prompt=prompt,
+                max_tokens=MAX_NEW_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                top_k=TOP_K,
+                repeat_penalty=REPEAT_PENALTY,
+                echo=False,
+            )
 
-            elapsed = (time.perf_counter() - start_time) * 1000
-            tokens = result.get("usage", {}).get("completion_tokens", 0)
-            logger.info(f"[Translate] {elapsed:.0f}ms | {tokens} tokens | {len(text)}->{len(translated)} chars")
+    try:
+        future = _executor.submit(do_inference)
+        result = future.result(timeout=TRANSLATE_TIMEOUT)
+        translated = result["choices"][0]["text"].strip()
 
-            return TranslateResponse(translatedText=translated)
-        except FuturesTimeoutError:
-            raise HTTPException(status_code=504, detail=f"Translation timeout ({TRANSLATE_TIMEOUT}s)")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
+        elapsed = (time.perf_counter() - start_time) * 1000
+        tokens = result.get("usage", {}).get("completion_tokens", 0)
+        logger.info(f"[Translate] {elapsed:.0f}ms | {tokens} tokens | {len(text)}->{len(translated)} chars")
 
-    raise HTTPException(status_code=503, detail="翻译模型未加载，请先在设置中下载翻译模型")
+        return TranslateResponse(translatedText=translated)
+    except FuturesTimeoutError:
+        raise HTTPException(status_code=504, detail=f"Translation timeout ({TRANSLATE_TIMEOUT}s)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
 
 
 @app.post("/translate_stream")
@@ -1033,55 +1056,55 @@ def translate_stream(req: TranslateRequest):
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
 
-    # 优先使用本地模型 (支持真正的流式)
-    if STATE.translate_model is not None:
-        prompt = build_prompt(req.source, req.target, text)
+    # 确保翻译模型已加载
+    if not STATE.ensure_translate_model():
+        raise HTTPException(status_code=503, detail="翻译模型未找到，请先在设置中下载翻译模型")
 
-        def generator():
-            import time
-            start_time = time.perf_counter()
-            stream = None
-            token_count = 0
-            translated_text = ""
-            # 使用锁防止并发访问，llama-cpp-python 不是线程安全的
-            with STATE._translate_lock:
-                try:
-                    stream = STATE.translate_model.create_completion(
-                        prompt=prompt,
-                        max_tokens=MAX_NEW_TOKENS,
-                        temperature=TEMPERATURE,
-                        top_p=TOP_P,
-                        top_k=TOP_K,
-                        repeat_penalty=REPEAT_PENALTY,
-                        echo=False,
-                        stream=True,
-                    )
-                    for chunk in stream:
-                        token = chunk.get("choices", [{}])[0].get("text", "")
-                        if token:
-                            token_count += 1
-                            translated_text += token
-                            payload = json.dumps({"token": token})
-                            yield f"data: {payload}\n\n"
-                    yield "data: [DONE]\n\n"
-                    # 打印时间日志
-                    elapsed = (time.perf_counter() - start_time) * 1000
-                    logger.info(f"[Translate-Stream] {elapsed:.0f}ms | {token_count} tokens | {len(text)}->{len(translated_text)} chars")
-                except GeneratorExit:
-                    # 客户端断开连接，正常退出
-                    elapsed = (time.perf_counter() - start_time) * 1000
-                    logger.info(f"[Translate-Stream] {elapsed:.0f}ms | cancelled | {token_count} tokens")
-                finally:
-                    # 确保流式迭代器被清理
-                    if stream is not None:
-                        try:
-                            stream.close()
-                        except Exception:
-                            pass
+    prompt = build_prompt(req.source, req.target, text)
 
-        return StreamingResponse(generator(), media_type="text/event-stream")
+    def generator():
+        import time
+        start_time = time.perf_counter()
+        stream = None
+        token_count = 0
+        translated_text = ""
+        # 使用锁防止并发访问，llama-cpp-python 不是线程安全的
+        with STATE._translate_lock:
+            try:
+                stream = STATE.translate_model.create_completion(
+                    prompt=prompt,
+                    max_tokens=MAX_NEW_TOKENS,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    top_k=TOP_K,
+                    repeat_penalty=REPEAT_PENALTY,
+                    echo=False,
+                    stream=True,
+                )
+                for chunk in stream:
+                    token = chunk.get("choices", [{}])[0].get("text", "")
+                    if token:
+                        token_count += 1
+                        translated_text += token
+                        payload = json.dumps({"token": token})
+                        yield f"data: {payload}\n\n"
+                yield "data: [DONE]\n\n"
+                # 打印时间日志
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.info(f"[Translate-Stream] {elapsed:.0f}ms | {token_count} tokens | {len(text)}->{len(translated_text)} chars")
+            except GeneratorExit:
+                # 客户端断开连接，正常退出
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.info(f"[Translate-Stream] {elapsed:.0f}ms | cancelled | {token_count} tokens")
+            finally:
+                # 确保流式迭代器被清理
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
-    raise HTTPException(status_code=503, detail="翻译模型未加载，请先在设置中下载翻译模型")
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 # ============== 配置 API ==============
