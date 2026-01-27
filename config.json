@@ -1,0 +1,66 @@
+{
+  "hotkey": "Ctrl+Alt+Q",
+  "swap_hotkey": "Ctrl+Alt+A",
+  "close_overlay_hotkey": "Escape",
+  "ocr_lang": "eng",
+  "ocr_engine": "paddleocr",
+  "source_lang": "en",
+  "target_lang": "zh",
+  "translator": "libretranslate",
+  "libretranslate": {
+    "url": "http://127.0.0.1:8092/translate",
+    "api_key": "",
+    "stream": true
+  },
+  "model_dir": "models",
+  "paddleocr": {
+    "lang": "en",
+    "ocr_version": "PP-OCRv5",
+    "model_type": "mobile",
+    "preload_models": [],
+    "use_textline_orientation": true,
+    "use_gpu": false,
+    "auto_download": false,
+    "debug": false,
+    "debug_capture": false,
+    "debug_capture_dir": "models/debug_captures",
+    "text_rec_score_thresh": 0.3,
+    "box_thresh": 0.3,
+    "unclip_ratio": 1.6,
+    "max_side": 1800
+  },
+  "tesseract_cmd": "",
+  "local_service": {
+    "enabled": true,
+    "type": "hymt_gguf",
+    "host": "127.0.0.1",
+    "port": 8092,
+    "quant": "Q6_K",
+    "auto_install": true,
+    "venv": ".venv-hymt-gguf",
+    "script_win": "scripts/deploy_hymt_gguf.ps1",
+    "script_unix": "scripts/deploy_hymt_gguf.sh"
+  },
+  "unified_service": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8092,
+    "timeout": 30,
+    "ocr_model_type": "mobile",
+    "preload_ocr": [],
+    "script_win": "scripts/deploy_unified.ps1",
+    "script_unix": "scripts/deploy_unified.sh"
+  },
+  "startup": {
+    "auto_load_ocr": true,
+    "auto_load_translator": true,
+    "auto_start_unified_service": false,
+    "auto_start_local_service": false
+  },
+  "ui": {
+    "poll_ms": 100,
+    "capture_delay_ms": 120,
+    "overlay_max_width": 300,
+    "overlay_max_height": 0
+  }
+}
