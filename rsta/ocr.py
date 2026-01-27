@@ -202,13 +202,13 @@ class PaddleOcrEngine:
         set_if("lang", lang)
         set_if("ocr_version", paddle_cfg.get("ocr_version", "PP-OCRv5"))
         # 支持指定 mobile/server 模型变体
-        model_type = paddle_cfg.get("model_type", "server")  # "mobile" 或 "server"
+        model_type = paddle_cfg.get("model_type", "mobile")  # "mobile" 或 "server"
         if model_type == "mobile":
             set_if("text_detection_model_name", paddle_cfg.get("text_detection_model_name", "PP-OCRv5_mobile_det"))
             set_if("text_recognition_model_name", paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_mobile_rec"))
-        elif paddle_cfg.get("text_detection_model_name"):
-            set_if("text_detection_model_name", paddle_cfg.get("text_detection_model_name"))
-            set_if("text_recognition_model_name", paddle_cfg.get("text_recognition_model_name"))
+        else:  # server
+            set_if("text_detection_model_name", paddle_cfg.get("text_detection_model_name", "PP-OCRv5_server_det"))
+            set_if("text_recognition_model_name", paddle_cfg.get("text_recognition_model_name", "PP-OCRv5_server_rec"))
         if "device" in allowed:
             device = "gpu" if bool(paddle_cfg.get("use_gpu", False)) else "cpu"
             set_if("device", device)

@@ -352,6 +352,16 @@ class ServiceState:
                 "use_textline_orientation": False,
                 "cpu_threads": max(cpu_count - 1, 1),
             }
+
+            # 根据模型类型指定模型名称
+            if model_type == "mobile":
+                kwargs["text_detection_model_name"] = "PP-OCRv5_mobile_det"
+                kwargs["text_recognition_model_name"] = "PP-OCRv5_mobile_rec"
+            else:  # server
+                kwargs["text_detection_model_name"] = "PP-OCRv5_server_det"
+                kwargs["text_recognition_model_name"] = "PP-OCRv5_server_rec"
+
+            logger.info(f"正在加载 OCR 模型: {model_type} ({kwargs.get('text_detection_model_name')})")
             engine = self._safe_create_ocr(PaddleOCR, kwargs)
             engine._backend = "paddleocr"  # 标记后端类型
             self.ocr_engines[cache_key] = engine
