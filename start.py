@@ -43,21 +43,6 @@ def log(msg):
     print(f"[Launcher] {msg}")
 
 
-def check_node_modules():
-    """检查 node_modules 是否已安装"""
-    node_modules = WEB_UI_DIR / "node_modules"
-    if not node_modules.exists():
-        log("node_modules 不存在，正在安装依赖...")
-        subprocess.run(
-            ["npm", "install"],
-            cwd=WEB_UI_DIR,
-            shell=True,
-            check=True
-        )
-        log("依赖安装完成")
-    return True
-
-
 def start_backend():
     """启动 Python 后端服务"""
     backend_python = get_backend_python()
@@ -280,9 +265,6 @@ def main():
     log("=" * 50)
 
     try:
-        # 检查依赖
-        check_node_modules()
-
         # 启动后端
         backend_proc = start_backend()
 

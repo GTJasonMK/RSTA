@@ -29,20 +29,33 @@ def log(msg: str, level: str = "INFO"):
     print(f"{color}[{level}]{reset} {msg}")
 
 
-def run_command(cmd: list, cwd: Path = None, check: bool = True) -> subprocess.CompletedProcess:
+def run_command(
+    cmd: list,
+    cwd: Path = None,
+    check: bool = True,
+    shell: bool = False,
+    capture: bool = True
+) -> subprocess.CompletedProcess:
     """运行命令"""
-    log(f"运行: {' '.join(cmd)}")
+    cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
+    log(f"运行: {cmd_str}")
+
     try:
         result = subprocess.run(
             cmd,
             cwd=cwd,
             check=check,
-            capture_output=True,
+            shell=shell,
+            capture_output=capture,
             text=True
         )
         return result
     except subprocess.CalledProcessError as e:
-        log(f"命令失败: {e.stderr}", "ERROR")
+        if e.stderr:
+            log(f"命令失败: {e.stderr}", "ERROR")
+        raise
+    except FileNotFoundError as e:
+        log(f"命令未找到: {cmd[0] if isinstance(cmd, list) else cmd}", "ERROR")
         raise
 
 
@@ -57,40 +70,107 @@ def install_uv():
 
     if sys.platform == "win32":
         # Windows: 使用 PowerShell 安装
-        cmd = [
-            "powershell", "-ExecutionPolicy", "ByPass", "-c",
-            "irm https://astral.sh/uv/install.ps1 | iex"
-        ]
-    else:
-        # Unix: 使用 curl 安装
-        cmd = ["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"]
-
-    try:
-        subprocess.run(cmd, check=True)
-        log("uv 安装成功", "SUCCESS")
-
-        # 提示用户重新加载 PATH
-        if sys.platform == "win32":
-            log("请重新打开终端或运行以下命令刷新环境变量:", "WARNING")
-            log('  $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")')
-        else:
-            log("请运行 'source ~/.bashrc' 或重新打开终端", "WARNING")
-
-        return True
-    except subprocess.CalledProcessError:
-        log("uv 安装失败，尝试使用 pip 安装...", "WARNING")
+        cmd = 'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
         try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "uv"], check=True)
-            log("uv (通过 pip) 安装成功", "SUCCESS")
+            subprocess.run(cmd, shell=True, check=True)
+            log("uv 安装成功", "SUCCESS")
+
+            # 刷新环境变量
+            refresh_path_windows()
             return True
         except subprocess.CalledProcessError:
-            log("uv 安装失败", "ERROR")
-            return False
+            pass
+    else:
+        # Unix: 使用 curl 安装
+        cmd = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+            log("uv 安装成功", "SUCCESS")
+
+            # 添加到 PATH
+            cargo_bin = Path.home() / ".cargo" / "bin"
+            if cargo_bin.exists():
+                os.environ["PATH"] = f"{cargo_bin}:{os.environ.get('PATH', '')}"
+            return True
+        except subprocess.CalledProcessError:
+            pass
+
+    # 回退：使用 pip 安装
+    log("官方安装失败，尝试使用 pip 安装...", "WARNING")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "uv"],
+            check=True,
+            capture_output=True
+        )
+        log("uv (通过 pip) 安装成功", "SUCCESS")
+        return True
+    except subprocess.CalledProcessError:
+        log("uv 安装失败", "ERROR")
+        return False
+
+
+def refresh_path_windows():
+    """刷新 Windows 环境变量"""
+    if sys.platform != "win32":
+        return
+
+    try:
+        # 从注册表获取最新的 PATH
+        import winreg
+
+        def get_path_from_registry(root, subkey):
+            try:
+                with winreg.OpenKey(root, subkey) as key:
+                    value, _ = winreg.QueryValueEx(key, "Path")
+                    return value
+            except WindowsError:
+                return ""
+
+        machine_path = get_path_from_registry(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+        )
+        user_path = get_path_from_registry(
+            winreg.HKEY_CURRENT_USER,
+            r"Environment"
+        )
+
+        os.environ["PATH"] = f"{machine_path};{user_path}"
+    except Exception:
+        pass
 
 
 def check_node_installed() -> bool:
     """检查 Node.js 是否已安装"""
-    return shutil.which("node") is not None and shutil.which("npm") is not None
+    # Windows 上需要用 shell=True 检查
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                "node --version",
+                shell=True,
+                capture_output=True,
+                text=True
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    else:
+        return shutil.which("node") is not None and shutil.which("npm") is not None
+
+
+def get_node_version() -> str:
+    """获取 Node.js 版本"""
+    try:
+        result = subprocess.run(
+            "node --version",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
 
 
 def create_venv_and_install():
@@ -98,7 +178,11 @@ def create_venv_and_install():
     log(f"创建虚拟环境: {VENV_DIR}")
 
     # 使用 uv 创建虚拟环境
-    run_command(["uv", "venv", str(VENV_DIR), "--python", "3.10"])
+    try:
+        run_command(["uv", "venv", str(VENV_DIR), "--python", "3.10"], shell=True)
+    except subprocess.CalledProcessError:
+        log("指定 Python 3.10 失败，使用默认版本...", "WARNING")
+        run_command(["uv", "venv", str(VENV_DIR)], shell=True)
 
     # 获取虚拟环境中的 Python 路径
     if sys.platform == "win32":
@@ -115,7 +199,7 @@ def create_venv_and_install():
             "uv", "pip", "install",
             "-r", str(requirements_file),
             "--python", str(venv_python)
-        ])
+        ], shell=True)
         log("Python 依赖安装成功", "SUCCESS")
     else:
         log("未找到 requirements.txt，跳过 Python 依赖安装", "WARNING")
@@ -138,7 +222,8 @@ def install_node_dependencies():
         return
 
     log("安装前端依赖...")
-    run_command(["npm", "install"], cwd=WEB_UI_DIR)
+    # Windows 上 npm 是 .cmd 文件，需要 shell=True
+    run_command(["npm", "install"], cwd=WEB_UI_DIR, shell=True, capture=False)
     log("前端依赖安装成功", "SUCCESS")
 
 
@@ -188,11 +273,14 @@ def main():
 
         # 重新检查
         if not check_uv_installed():
-            log("uv 安装后需要重新打开终端", "WARNING")
-            log("或者尝试: pip install uv", "INFO")
-            sys.exit(1)
-    else:
-        log("uv 已安装", "SUCCESS")
+            # 再次刷新 PATH
+            refresh_path_windows()
+            if not check_uv_installed():
+                log("uv 安装后需要重新打开终端", "WARNING")
+                log("或者尝试: pip install uv", "INFO")
+                sys.exit(1)
+
+    log("uv 已安装", "SUCCESS")
 
     # 检查 Node.js
     if not check_node_installed():
@@ -200,8 +288,7 @@ def main():
         log("请先安装 Node.js: https://nodejs.org/", "ERROR")
         sys.exit(1)
     else:
-        result = subprocess.run(["node", "--version"], capture_output=True, text=True)
-        log(f"Node.js 版本: {result.stdout.strip()}", "SUCCESS")
+        log(f"Node.js 版本: {get_node_version()}", "SUCCESS")
 
     print()
 
