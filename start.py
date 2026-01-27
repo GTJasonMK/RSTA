@@ -1,6 +1,10 @@
 """
 一键启动脚本
 启动 Python 后端服务和 Electron 前端应用
+
+用法:
+  python start.py         # 生产模式（推荐，启动快）
+  python start.py --dev   # 开发模式（启动 Vite 开发服务器）
 """
 
 import os
@@ -15,6 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 WEB_UI_DIR = ROOT_DIR / "web-ui"
 SCRIPTS_DIR = ROOT_DIR / "scripts"
 VENV_DIR = ROOT_DIR / ".venv-hymt-gguf"
+DIST_DIR = WEB_UI_DIR / "dist"
 
 # 配置
 BACKEND_PORT = 8092
@@ -47,7 +52,6 @@ def start_backend():
     """启动 Python 后端服务"""
     backend_python = get_backend_python()
     log(f"启动后端服务 (端口 {BACKEND_PORT})...")
-    log(f"使用 Python: {backend_python}")
     env = os.environ.copy()
     env["PORT"] = str(BACKEND_PORT)
 
@@ -57,7 +61,6 @@ def start_backend():
     env["FLAGS_pir_apply_inplace_pass"] = "0"
     env["FLAGS_enable_pir_with_pt_kernel"] = "0"
     env["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-    # 注意：不要禁用 MKLDNN，否则 OCR 会非常慢
 
     proc = subprocess.Popen(
         [backend_python, str(SCRIPTS_DIR / "serve_unified.py")],
@@ -73,7 +76,7 @@ def start_backend():
 
 
 def start_vite():
-    """启动 Vite 开发服务器"""
+    """启动 Vite 开发服务器（仅开发模式）"""
     log(f"启动 Vite 开发服务器 (端口 {VITE_PORT})...")
 
     proc = subprocess.Popen(
@@ -90,11 +93,14 @@ def start_vite():
     return proc
 
 
-def start_electron():
+def start_electron(dev_mode=False):
     """启动 Electron 应用"""
     log("启动 Electron 应用...")
     env = os.environ.copy()
-    env["NODE_ENV"] = "development"
+
+    # 生产模式不设置 NODE_ENV=development，让 Electron 加载 dist 目录
+    if dev_mode:
+        env["NODE_ENV"] = "development"
 
     proc = subprocess.Popen(
         ["npm", "run", "start"],
@@ -121,7 +127,6 @@ def wait_for_vite(timeout=30):
     while time.time() - start_time < timeout:
         req = None
         try:
-            # 尝试实际请求页面，而不仅仅是端口检测
             req = urllib.request.urlopen(f"http://127.0.0.1:{VITE_PORT}", timeout=2)
             if req.status == 200:
                 log("Vite 服务器已就绪")
@@ -134,14 +139,14 @@ def wait_for_vite(timeout=30):
                     req.close()
                 except Exception:
                     pass
-        time.sleep(0.5)  # 更快的轮询间隔
+        time.sleep(0.5)
 
     log("警告: Vite 服务器启动超时")
     return False
 
 
 def wait_for_backend(timeout=30):
-    """等待后端服务就绪（快速启动模式下应该很快）"""
+    """等待后端服务就绪"""
     import socket
 
     log("等待后端服务就绪...")
@@ -164,10 +169,35 @@ def wait_for_backend(timeout=30):
                     sock.close()
                 except Exception:
                     pass
-        time.sleep(0.3)  # 更快的轮询间隔
+        time.sleep(0.3)
 
     log("警告: 后端服务启动超时")
     return False
+
+
+def build_frontend():
+    """构建前端（如果 dist 不存在）"""
+    if DIST_DIR.exists() and (DIST_DIR / "index.html").exists():
+        log("前端已构建，跳过构建步骤")
+        return True
+
+    log("首次运行，正在构建前端...")
+    log("（这可能需要一些时间，后续启动会很快）")
+
+    result = subprocess.run(
+        ["npm", "run", "build"],
+        cwd=WEB_UI_DIR,
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        log(f"前端构建失败: {result.stderr}")
+        return False
+
+    log("前端构建完成")
+    return True
 
 
 def _stream_reader(proc, name):
@@ -183,7 +213,6 @@ def cleanup():
     """清理所有子进程"""
     log("正在关闭所有服务...")
 
-    # 先尝试正常终止进程
     for name, proc in processes:
         try:
             if proc.poll() is None:
@@ -209,7 +238,6 @@ def cleanup():
         except Exception as e:
             log(f"警告: 清理 {name} 时出错: {e}")
 
-    # 等待进程实际终止
     for name, proc in processes:
         try:
             proc.wait(timeout=3)
@@ -254,6 +282,9 @@ def signal_handler(signum, frame):
 
 
 def main():
+    # 解析参数
+    dev_mode = "--dev" in sys.argv
+
     # 注册信号处理
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -262,29 +293,42 @@ def main():
 
     log("=" * 50)
     log("实时屏幕翻译 - 一键启动")
+    log(f"模式: {'开发模式' if dev_mode else '生产模式（快速启动）'}")
     log("=" * 50)
 
     try:
-        # 启动后端
-        backend_proc = start_backend()
+        if dev_mode:
+            # 开发模式：启动 Vite 开发服务器
+            backend_proc = start_backend()
+            vite_proc = start_vite()
+            wait_for_backend()
+            wait_for_vite()
+            time.sleep(0.5)
+            electron_proc = start_electron(dev_mode=True)
 
-        # 启动 Vite
-        vite_proc = start_vite()
+            log("=" * 50)
+            log("所有服务已启动（开发模式）")
+            log(f"  后端服务: http://127.0.0.1:{BACKEND_PORT}")
+            log(f"  Vite 服务: http://127.0.0.1:{VITE_PORT}")
+            log("按 Ctrl+C 停止所有服务")
+            log("=" * 50)
+        else:
+            # 生产模式：使用预构建的前端
+            if not build_frontend():
+                log("错误: 前端构建失败，无法启动")
+                return
 
-        # 等待服务就绪
-        wait_for_backend()
-        wait_for_vite()
+            backend_proc = start_backend()
+            wait_for_backend()
 
-        # 启动 Electron
-        time.sleep(1)
-        electron_proc = start_electron()
+            # 生产模式下不需要等待 Vite，直接启动 Electron
+            electron_proc = start_electron(dev_mode=False)
 
-        log("=" * 50)
-        log("所有服务已启动")
-        log(f"  后端服务: http://127.0.0.1:{BACKEND_PORT}")
-        log(f"  Vite 服务: http://127.0.0.1:{VITE_PORT}")
-        log("按 Ctrl+C 停止所有服务")
-        log("=" * 50)
+            log("=" * 50)
+            log("所有服务已启动（生产模式）")
+            log(f"  后端服务: http://127.0.0.1:{BACKEND_PORT}")
+            log("按 Ctrl+C 停止所有服务")
+            log("=" * 50)
 
         # 启动独立线程读取每个进程的输出
         import threading
@@ -294,12 +338,10 @@ def main():
 
         # 监控进程状态
         while True:
-            # 如果 Electron 退出，则关闭所有服务
             if electron_proc.poll() is not None:
                 log("Electron 已退出，正在关闭其他服务...")
                 break
 
-            # 检查是否所有进程都已退出
             all_dead = all(proc.poll() is not None for _, proc in processes)
             if all_dead:
                 break
