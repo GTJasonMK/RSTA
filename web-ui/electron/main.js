@@ -52,6 +52,8 @@ function createMainWindow() {
     console.log('Main window ready to show');
     mainWindow.show();
     mainWindow.focus();
+    // 初始化任务栏 overlay 图标（使用默认语言）
+    updateTaskbarOverlay(currentSourceLang, currentTargetLang);
   });
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -581,6 +583,132 @@ function updateTrayIcon(sourceLang, targetLang) {
   const srcDisplay = LANG_DISPLAY[currentSourceLang?.toLowerCase()] || currentSourceLang;
   const tgtDisplay = LANG_DISPLAY[currentTargetLang?.toLowerCase()] || currentTargetLang;
   tray.setToolTip(`Screen Translate: ${srcDisplay} -> ${tgtDisplay}`);
+
+  // 同时更新任务栏 overlay 图标（Windows 特有功能）
+  updateTaskbarOverlay(currentSourceLang, currentTargetLang);
+}
+
+// 创建任务栏 overlay 图标（显示语言信息）
+function createTaskbarOverlayIcon(sourceLang, targetLang) {
+  const { nativeImage } = require('electron');
+
+  // 获取显示文字（使用更短的形式）
+  const srcText = LANG_DISPLAY[sourceLang?.toLowerCase()]?.charAt(0) || sourceLang?.charAt(0)?.toUpperCase() || '?';
+  const tgtText = LANG_DISPLAY[targetLang?.toLowerCase()]?.charAt(0) || targetLang?.charAt(0)?.toUpperCase() || '?';
+
+  // 16x16 像素的小图标
+  const size = 16;
+  const canvas = Buffer.alloc(size * size * 4);
+
+  // 填充深色背景
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      // 圆角效果
+      const cornerRadius = 2;
+      const inCorner = (
+        (x < cornerRadius && y < cornerRadius && Math.sqrt((cornerRadius - x) ** 2 + (cornerRadius - y) ** 2) > cornerRadius) ||
+        (x >= size - cornerRadius && y < cornerRadius && Math.sqrt((x - (size - cornerRadius - 1)) ** 2 + (cornerRadius - y) ** 2) > cornerRadius) ||
+        (x < cornerRadius && y >= size - cornerRadius && Math.sqrt((cornerRadius - x) ** 2 + (y - (size - cornerRadius - 1)) ** 2) > cornerRadius) ||
+        (x >= size - cornerRadius && y >= size - cornerRadius && Math.sqrt((x - (size - cornerRadius - 1)) ** 2 + (y - (size - cornerRadius - 1)) ** 2) > cornerRadius)
+      );
+
+      if (inCorner) {
+        canvas[idx + 3] = 0;
+      } else {
+        canvas[idx] = 45;
+        canvas[idx + 1] = 45;
+        canvas[idx + 2] = 48;
+        canvas[idx + 3] = 255;
+      }
+    }
+  }
+
+  // 简化的 3x5 像素字体（单字符）
+  const miniFont = {
+    'E': [[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,1,1]],
+    'N': [[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+    'F': [[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,0,0]],
+    'R': [[1,1,0],[1,0,1],[1,1,0],[1,0,1],[1,0,1]],
+    'D': [[1,1,0],[1,0,1],[1,0,1],[1,0,1],[1,1,0]],
+    'S': [[0,1,1],[1,0,0],[0,1,0],[0,0,1],[1,1,0]],
+    'P': [[1,1,0],[1,0,1],[1,1,0],[1,0,0],[1,0,0]],
+    'I': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[1,1,1]],
+    'T': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[0,1,0]],
+    'V': [[1,0,1],[1,0,1],[1,0,1],[0,1,0],[0,1,0]],
+    '?': [[0,1,0],[1,0,1],[0,0,1],[0,1,0],[0,1,0]],
+  };
+
+  // CJK 字符 3x3 超简化版
+  const miniCJK = {
+    '中': [[0,1,0],[1,1,1],[0,1,0]],
+    '繁': [[1,0,1],[0,1,0],[1,0,1]],
+    '日': [[1,1,1],[1,0,1],[1,1,1]],
+    '韩': [[1,0,1],[1,1,1],[1,0,1]],
+  };
+
+  function drawPixel(x, y, r, g, b) {
+    if (x >= 0 && x < size && y >= 0 && y < size) {
+      const idx = (y * size + x) * 4;
+      canvas[idx] = r;
+      canvas[idx + 1] = g;
+      canvas[idx + 2] = b;
+      canvas[idx + 3] = 255;
+    }
+  }
+
+  function drawMiniChar(char, startX, startY, r, g, b) {
+    // 检查是否是 CJK
+    if (miniCJK[char]) {
+      const charData = miniCJK[char];
+      for (let cy = 0; cy < 3; cy++) {
+        for (let cx = 0; cx < 3; cx++) {
+          if (charData[cy][cx]) {
+            drawPixel(startX + cx, startY + cy, r, g, b);
+          }
+        }
+      }
+      return;
+    }
+
+    // 拉丁字符
+    const charData = miniFont[char.toUpperCase()] || miniFont['?'];
+    for (let cy = 0; cy < 5; cy++) {
+      for (let cx = 0; cx < 3; cx++) {
+        if (charData[cy][cx]) {
+          drawPixel(startX + cx, startY + cy, r, g, b);
+        }
+      }
+    }
+  }
+
+  // 绘制源语言（左上，白色）
+  const isSrcCJK = !!miniCJK[srcText];
+  drawMiniChar(srcText, 2, isSrcCJK ? 2 : 1, 255, 255, 255);
+
+  // 绘制箭头（中间）
+  drawPixel(7, 7, 245, 158, 11);
+  drawPixel(8, 7, 245, 158, 11);
+
+  // 绘制目标语言（右下，橙色）
+  const isTgtCJK = !!miniCJK[tgtText];
+  drawMiniChar(tgtText, isTgtCJK ? 11 : 11, isTgtCJK ? 11 : 10, 245, 158, 11);
+
+  return nativeImage.createFromBuffer(canvas, { width: size, height: size });
+}
+
+// 更新任务栏 overlay 图标
+function updateTaskbarOverlay(sourceLang, targetLang) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  // setOverlayIcon 仅在 Windows 上有效
+  if (process.platform !== 'win32') return;
+
+  const icon = createTaskbarOverlayIcon(sourceLang, targetLang);
+  const srcDisplay = LANG_DISPLAY[sourceLang?.toLowerCase()] || sourceLang;
+  const tgtDisplay = LANG_DISPLAY[targetLang?.toLowerCase()] || targetLang;
+
+  mainWindow.setOverlayIcon(icon, `${srcDisplay} -> ${tgtDisplay}`);
 }
 
 // IPC: 更新托盘语言显示
