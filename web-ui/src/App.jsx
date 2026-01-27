@@ -144,8 +144,11 @@ const OCR_MODELS = [
 
 const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverPort }) => {
   const [activeTab, setActiveTab] = useState('general');
-  const [modelStatus, setModelStatus] = useState({ ocr: { downloaded: false }, translate: { downloaded: false } });
-  const [downloadingModel, setDownloadingModel] = useState(null); // 'ocr' | 'translate' | null
+  const [modelStatus, setModelStatus] = useState({
+    ocr: { downloaded: false, mobile_downloaded: false, server_downloaded: false },
+    translate: { downloaded: false }
+  });
+  const [downloadingModel, setDownloadingModel] = useState(null); // 'ocr_mobile' | 'ocr_server' | 'translate' | null
   const [downloadProgress, setDownloadProgress] = useState({ percent: 0, message: '' });
 
   // 获取模型状态
@@ -162,13 +165,20 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
   }, [serverPort]);
 
   // 下载模型（使用流式接口显示进度）
-  const downloadModel = async (modelType) => {
-    setDownloadingModel(modelType);
+  const downloadModel = async (modelType, ocrModelType = 'mobile') => {
+    const downloadKey = modelType === 'ocr' ? `ocr_${ocrModelType}` : modelType;
+    setDownloadingModel(downloadKey);
     setDownloadProgress({ percent: 0, message: '正在连接...' });
 
     try {
+      // 构建 URL，OCR 模型需要额外的 ocr_model_type 参数
+      let url = `http://127.0.0.1:${serverPort}/models/download_stream?model_type=${modelType}`;
+      if (modelType === 'ocr') {
+        url += `&ocr_model_type=${ocrModelType}`;
+      }
+
       // 使用 EventSource 连接到流式下载接口
-      const eventSource = new EventSource(`http://127.0.0.1:${serverPort}/models/download_stream?model_type=${modelType}`);
+      const eventSource = new EventSource(url);
 
       eventSource.onmessage = (event) => {
         try {
@@ -407,27 +417,47 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
                   <SettingRow label="模型存储路径">
                     <Input value={config.model_dir || 'models'} onChange={(v) => updateConfig('model_dir', v)} className="w-64" />
                   </SettingRow>
-                  <SettingRow label="OCR 模型" description={modelStatus.ocr?.downloaded ? '已下载' : '未下载'}>
+                  <SettingRow label="OCR Mobile 模型" description={modelStatus.ocr?.mobile_downloaded ? '已下载 (快速)' : '未下载 (快速)'}>
                     <div className="flex flex-col items-end gap-1">
                       <button
-                        onClick={() => downloadModel('ocr')}
-                        disabled={downloadingModel !== null || modelStatus.ocr?.downloaded}
+                        onClick={() => downloadModel('ocr', 'mobile')}
+                        disabled={downloadingModel !== null || modelStatus.ocr?.mobile_downloaded}
                         className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                          modelStatus.ocr?.downloaded
+                          modelStatus.ocr?.mobile_downloaded
                             ? 'bg-green-100 text-green-700 cursor-default'
-                            : downloadingModel === 'ocr'
+                            : downloadingModel === 'ocr_mobile'
                             ? 'bg-stone-200 text-stone-500 cursor-wait'
                             : 'bg-amber-500 hover:bg-amber-600 text-white'
                         }`}
                       >
-                        {modelStatus.ocr?.downloaded ? 'OK' : downloadingModel === 'ocr' ? `${downloadProgress.percent}%` : '下载'}
+                        {modelStatus.ocr?.mobile_downloaded ? 'OK' : downloadingModel === 'ocr_mobile' ? `${downloadProgress.percent}%` : '下载'}
                       </button>
-                      {downloadingModel === 'ocr' && downloadProgress.message && (
+                      {downloadingModel === 'ocr_mobile' && downloadProgress.message && (
                         <span className="text-xs text-stone-500 max-w-48 text-right truncate">{downloadProgress.message}</span>
                       )}
                     </div>
                   </SettingRow>
-                  <SettingRow label="翻译模型" description={modelStatus.translate?.downloaded ? '已下载' : '未下载'}>
+                  <SettingRow label="OCR Server 模型" description={modelStatus.ocr?.server_downloaded ? '已下载 (精准)' : '未下载 (精准)'}>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        onClick={() => downloadModel('ocr', 'server')}
+                        disabled={downloadingModel !== null || modelStatus.ocr?.server_downloaded}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                          modelStatus.ocr?.server_downloaded
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : downloadingModel === 'ocr_server'
+                            ? 'bg-stone-200 text-stone-500 cursor-wait'
+                            : 'bg-amber-500 hover:bg-amber-600 text-white'
+                        }`}
+                      >
+                        {modelStatus.ocr?.server_downloaded ? 'OK' : downloadingModel === 'ocr_server' ? `${downloadProgress.percent}%` : '下载'}
+                      </button>
+                      {downloadingModel === 'ocr_server' && downloadProgress.message && (
+                        <span className="text-xs text-stone-500 max-w-48 text-right truncate">{downloadProgress.message}</span>
+                      )}
+                    </div>
+                  </SettingRow>
+                  <SettingRow label="翻译模型" description={modelStatus.translate?.downloaded ? '已下载 (HY-MT)' : '未下载 (HY-MT)'}>
                     <div className="flex flex-col items-end gap-1">
                       <button
                         onClick={() => downloadModel('translate')}
@@ -506,7 +536,11 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
     });
   };
 
-  const ocrReady = modelStatus?.ocr?.downloaded;
+  // 根据配置的模型类型检查对应的 OCR 模型是否下载
+  const ocrModelType = config.paddleocr?.model_type || 'mobile';
+  const ocrReady = ocrModelType === 'mobile'
+    ? modelStatus?.ocr?.mobile_downloaded
+    : modelStatus?.ocr?.server_downloaded;
   const translateReady = modelStatus?.translate?.downloaded;
   const canCapture = status === 'ready' && ocrReady && translateReady && !isModelLoading;
 
@@ -605,7 +639,7 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
           <div className="h-3 w-px bg-stone-200" />
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${ocrReady ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span>OCR: {ocrReady ? 'Ready' : 'Not Downloaded'}</span>
+            <span>OCR ({ocrModelType}): {ocrReady ? 'Ready' : 'Not Downloaded'}</span>
           </div>
           <div className="h-3 w-px bg-stone-200" />
           <div className="flex items-center gap-2">
@@ -896,7 +930,10 @@ const App = () => {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [loadedModels, setLoadedModels] = useState(new Set());
-  const [modelStatus, setModelStatus] = useState({ ocr: { downloaded: false }, translate: { downloaded: false } });
+  const [modelStatus, setModelStatus] = useState({
+    ocr: { downloaded: false, mobile_downloaded: false, server_downloaded: false },
+    translate: { downloaded: false }
+  });
   const [config, setConfig] = useState({
     source_lang: 'en',
     target_lang: 'zh',

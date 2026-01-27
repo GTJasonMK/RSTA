@@ -283,33 +283,38 @@ class ServiceState:
             except ImportError:
                 raise RuntimeError("OCR 引擎未安装，请安装 rapidocr-onnxruntime 或 paddleocr")
 
-            # 检查模型是否存在（通过检查 PADDLEOCR_HOME 目录）
-            paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
-            if paddleocr_home.exists():
-                # 检查是否有模型文件（whl 目录下应该有模型）
-                whl_dir = paddleocr_home / "whl"
-                has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
-            else:
-                has_models = False
+            # 检查模型是否存在（检查 PaddleX 目录，PaddleOCR v5 使用 PaddleX）
+            has_models = False
+            paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
+            if paddlex_home.exists():
+                official_models_dir = paddlex_home / "official_models"
+                if official_models_dir.exists():
+                    model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
+                    for model_dir_check in model_dirs:
+                        if list(model_dir_check.glob("*.pdiparams")) or list(model_dir_check.glob("*.pdparams")):
+                            has_models = True
+                            break
+            # 兼容旧版 PaddleOCR
+            if not has_models:
+                paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
+                if paddleocr_home.exists():
+                    whl_dir = paddleocr_home / "whl"
+                    has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
 
             if not has_models and not auto_download:
                 raise RuntimeError(
                     f"\n{'='*60}\n"
                     f"OCR 模型未找到！\n"
                     f"{'='*60}\n\n"
-                    f"模型目录: {paddleocr_home}\n\n"
-                    f"请选择以下方式之一：\n"
-                    f"  1. 在 config.json 中设置 paddleocr.auto_download = true 允许自动下载\n"
-                    f"  2. 手动下载模型到上述目录\n\n"
-                    f"PaddleOCR 模型下载地址：\n"
-                    f"  https://github.com/PaddlePaddle/PaddleOCR/blob/main/doc/doc_ch/models_list.md\n"
+                    f"模型目录: {paddlex_home / 'official_models'}\n\n"
+                    f"请在设置页面点击下载按钮下载 OCR 模型\n"
                     f"{'='*60}\n"
                 )
 
             if not has_models:
                 logger.info(f"\n{'='*60}")
                 logger.info("正在下载 OCR 模型（首次使用需要下载）...")
-                logger.info(f"模型将保存到: {paddleocr_home}")
+                logger.info(f"模型将保存到: {paddlex_home / 'official_models'}")
                 logger.info(f"{'='*60}\n")
 
             ocr_lang = OCR_LANG_MAP.get(lang, "en")
@@ -650,9 +655,9 @@ def list_models():
 @app.get("/models/status")
 def get_models_status():
     """获取模型下载状态"""
-    # 检查 OCR 模型
-    # PaddleOCR v5 使用 PaddleX，模型下载到 paddlex/official_models/ 目录
-    ocr_downloaded = False
+    # 检查 OCR 模型（分别检查 mobile 和 server）
+    ocr_mobile_downloaded = False
+    ocr_server_downloaded = False
     ocr_path = None
 
     # 检查 PaddleX 模型目录 (PaddleOCR v5 使用)
@@ -660,23 +665,32 @@ def get_models_status():
     if paddlex_home.exists():
         official_models_dir = paddlex_home / "official_models"
         if official_models_dir.exists():
-            # 检查是否有任何模型目录（如 PP-OCRv5_mobile_det）
-            model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
-            if model_dirs:
-                # 检查模型目录中是否有实际的模型文件
-                for model_dir in model_dirs:
-                    if list(model_dir.glob("*.pdiparams")) or list(model_dir.glob("*.pdparams")):
-                        ocr_downloaded = True
-                        ocr_path = str(official_models_dir)
-                        break
+            ocr_path = str(official_models_dir)
+            # 检查 mobile 模型
+            mobile_det = official_models_dir / "PP-OCRv5_mobile_det"
+            mobile_rec = official_models_dir / "PP-OCRv5_mobile_rec"
+            if mobile_det.exists() and mobile_rec.exists():
+                det_ok = list(mobile_det.glob("*.pdiparams")) or list(mobile_det.glob("*.pdparams"))
+                rec_ok = list(mobile_rec.glob("*.pdiparams")) or list(mobile_rec.glob("*.pdparams"))
+                if det_ok and rec_ok:
+                    ocr_mobile_downloaded = True
+            # 检查 server 模型
+            server_det = official_models_dir / "PP-OCRv5_server_det"
+            server_rec = official_models_dir / "PP-OCRv5_server_rec"
+            if server_det.exists() and server_rec.exists():
+                det_ok = list(server_det.glob("*.pdiparams")) or list(server_det.glob("*.pdparams"))
+                rec_ok = list(server_rec.glob("*.pdiparams")) or list(server_rec.glob("*.pdparams"))
+                if det_ok and rec_ok:
+                    ocr_server_downloaded = True
 
-    # 检查旧版 PaddleOCR 模型目录（兼容性）
-    if not ocr_downloaded:
+    # 检查旧版 PaddleOCR 模型目录（兼容性）- 如果有则认为两种都有
+    if not ocr_mobile_downloaded and not ocr_server_downloaded:
         paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
         if paddleocr_home.exists():
             whl_dir = paddleocr_home / "whl"
             if whl_dir.exists() and any(whl_dir.iterdir()):
-                ocr_downloaded = True
+                ocr_mobile_downloaded = True
+                ocr_server_downloaded = True
                 ocr_path = str(paddleocr_home)
 
     # 检查翻译模型
@@ -691,7 +705,9 @@ def get_models_status():
 
     return {
         "ocr": {
-            "downloaded": ocr_downloaded,
+            "downloaded": ocr_mobile_downloaded or ocr_server_downloaded,  # 兼容旧版
+            "mobile_downloaded": ocr_mobile_downloaded,
+            "server_downloaded": ocr_server_downloaded,
             "path": ocr_path,
         },
         "translate": {
@@ -772,8 +788,13 @@ def download_model(req: DownloadModelRequest):
 
 
 @app.get("/models/download_stream")
-def download_model_stream(model_type: str):
-    """流式下载模型（带进度）"""
+def download_model_stream(model_type: str, ocr_model_type: str = "mobile"):
+    """流式下载模型（带进度）
+
+    参数:
+        model_type: "ocr" 或 "translate"
+        ocr_model_type: OCR 模型类型，"mobile" 或 "server"（仅当 model_type="ocr" 时有效）
+    """
 
     def generate():
         def send_progress(percent: int, message: str, status: str = "downloading"):
@@ -782,16 +803,24 @@ def download_model_stream(model_type: str):
 
         if model_type == "ocr":
             try:
-                yield send_progress(0, "正在初始化 OCR 模块...", "downloading")
+                model_label = "Mobile" if ocr_model_type == "mobile" else "Server"
+                yield send_progress(0, f"正在初始化 OCR 模块 ({model_label})...", "downloading")
 
                 from paddleocr import PaddleOCR
 
                 yield send_progress(10, "正在检查模型文件...", "downloading")
 
+                # 根据模型类型设置不同的模型名称
                 kwargs = {"lang": "en", "device": "cpu"}
+                if ocr_model_type == "mobile":
+                    kwargs["text_detection_model_name"] = "PP-OCRv5_mobile_det"
+                    kwargs["text_recognition_model_name"] = "PP-OCRv5_mobile_rec"
+                else:
+                    kwargs["text_detection_model_name"] = "PP-OCRv5_server_det"
+                    kwargs["text_recognition_model_name"] = "PP-OCRv5_server_rec"
                 pending = dict(kwargs)
 
-                yield send_progress(20, "正在下载 OCR 模型（此过程可能需要几分钟）...", "downloading")
+                yield send_progress(20, f"正在下载 OCR {model_label} 模型（此过程可能需要几分钟）...", "downloading")
 
                 while True:
                     try:
