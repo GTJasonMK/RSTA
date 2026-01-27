@@ -23,6 +23,13 @@ os.environ["FLAGS_pir_subgraph_saving_dir"] = ""
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # 注意：不要禁用 MKLDNN，否则 CPU 推理会非常慢
 
+# 设置 PaddleOCR 模型下载目录到项目的 models 目录
+from pathlib import Path as _Path
+_SCRIPT_DIR = _Path(__file__).resolve().parent.parent
+_PADDLEOCR_HOME = _SCRIPT_DIR / "models" / "paddleocr"
+_PADDLEOCR_HOME.mkdir(parents=True, exist_ok=True)
+os.environ["PADDLEOCR_HOME"] = str(_PADDLEOCR_HOME)
+
 import base64
 import io
 import json
@@ -195,6 +202,18 @@ class ServiceState:
         self.translate_file = None
         self._ocr_lock = threading.Lock()  # 防止并发加载 OCR 模型
         self._translate_lock = threading.Lock()  # 防止并发访问翻译模型
+        self._config = None
+
+    def _load_config(self):
+        """加载配置文件"""
+        if self._config is None:
+            config_path = _SCRIPT_DIR / "config.json"  # _SCRIPT_DIR 是项目根目录
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    self._config = json.load(f)
+            else:
+                self._config = {}
+        return self._config
 
     def get_ocr_engine(self, model_type: str, lang: str = "en"):
         cache_key = f"{model_type}_{lang}"
@@ -207,6 +226,11 @@ class ServiceState:
         # 先检查是否已加载（无锁快速路径）
         if cache_key in self.ocr_engines:
             return self.ocr_engines[cache_key]
+
+        # 加载配置，检查是否允许自动下载
+        config = self._load_config()
+        paddle_cfg = config.get("paddleocr", {})
+        auto_download = bool(paddle_cfg.get("auto_download", False))
 
         # 加锁防止并发加载
         with self._ocr_lock:
@@ -253,6 +277,35 @@ class ServiceState:
                 from paddleocr import PaddleOCR
             except ImportError:
                 raise RuntimeError("OCR 引擎未安装，请安装 rapidocr-onnxruntime 或 paddleocr")
+
+            # 检查模型是否存在（通过检查 PADDLEOCR_HOME 目录）
+            paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
+            if paddleocr_home.exists():
+                # 检查是否有模型文件（whl 目录下应该有模型）
+                whl_dir = paddleocr_home / "whl"
+                has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
+            else:
+                has_models = False
+
+            if not has_models and not auto_download:
+                raise RuntimeError(
+                    f"\n{'='*60}\n"
+                    f"OCR 模型未找到！\n"
+                    f"{'='*60}\n\n"
+                    f"模型目录: {paddleocr_home}\n\n"
+                    f"请选择以下方式之一：\n"
+                    f"  1. 在 config.json 中设置 paddleocr.auto_download = true 允许自动下载\n"
+                    f"  2. 手动下载模型到上述目录\n\n"
+                    f"PaddleOCR 模型下载地址：\n"
+                    f"  https://github.com/PaddlePaddle/PaddleOCR/blob/main/doc/doc_ch/models_list.md\n"
+                    f"{'='*60}\n"
+                )
+
+            if not has_models:
+                logger.info(f"\n{'='*60}")
+                logger.info("正在下载 OCR 模型（首次使用需要下载）...")
+                logger.info(f"模型将保存到: {paddleocr_home}")
+                logger.info(f"{'='*60}\n")
 
             ocr_lang = OCR_LANG_MAP.get(lang, "en")
 
@@ -637,6 +690,128 @@ def list_models():
         ocr_loaded=list(STATE.ocr_engines.keys()),
         translate_model=STATE.translate_file,
     )
+
+
+@app.get("/models/status")
+def get_models_status():
+    """获取模型下载状态"""
+    # 检查 OCR 模型
+    paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
+    ocr_downloaded = False
+    if paddleocr_home.exists():
+        whl_dir = paddleocr_home / "whl"
+        ocr_downloaded = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
+
+    # 检查翻译模型
+    translate_downloaded = False
+    translate_model_path = None
+    model_dir = _SCRIPT_DIR / "models"
+    if model_dir.exists():
+        gguf_files = list(model_dir.rglob("*.gguf"))
+        if gguf_files:
+            translate_downloaded = True
+            translate_model_path = str(gguf_files[0])
+
+    return {
+        "ocr": {
+            "downloaded": ocr_downloaded,
+            "path": str(paddleocr_home) if paddleocr_home.exists() else None,
+        },
+        "translate": {
+            "downloaded": translate_downloaded,
+            "path": translate_model_path,
+        }
+    }
+
+
+class DownloadModelRequest(BaseModel):
+    model_type: str  # "ocr" or "translate"
+
+
+@app.post("/models/download")
+def download_model(req: DownloadModelRequest):
+    """下载模型"""
+    if req.model_type == "ocr":
+        # 下载 OCR 模型 - 通过加载 PaddleOCR 触发自动下载
+        try:
+            from paddleocr import PaddleOCR
+
+            logger.info("开始下载 OCR 模型...")
+
+            # 创建 PaddleOCR 实例会自动下载模型
+            kwargs = {
+                "lang": "en",
+                "device": "cpu",
+            }
+            # 安全创建，移除不支持的参数
+            pending = dict(kwargs)
+            while True:
+                try:
+                    _ = PaddleOCR(**pending)
+                    break
+                except Exception as exc:
+                    message = str(exc)
+                    if "Unknown argument" not in message:
+                        raise
+                    name = message.split("Unknown argument:", 1)[-1].strip().split()[0]
+                    if name in pending:
+                        pending.pop(name, None)
+                        continue
+                    raise
+
+            logger.info("OCR 模型下载完成")
+            return {"status": "ok", "message": "OCR 模型下载完成"}
+        except ImportError:
+            raise HTTPException(status_code=500, detail="PaddleOCR 未安装")
+        except Exception as e:
+            logger.error(f"OCR 模型下载失败: {e}")
+            raise HTTPException(status_code=500, detail=f"OCR 模型下载失败: {e}")
+
+    elif req.model_type == "translate":
+        # 下载翻译模型
+        try:
+            from huggingface_hub import hf_hub_download, list_repo_files
+
+            repo_id = "tencent/HY-MT1.5-1.8B-GGUF"
+            config = STATE._load_config()
+            quant = config.get("local_service", {}).get("quant", "Q6_K")
+            model_dir = _SCRIPT_DIR / "models"
+            model_dir.mkdir(parents=True, exist_ok=True)
+
+            logger.info(f"开始下载翻译模型 (量化级别: {quant})...")
+
+            # 获取文件列表并选择匹配的文件
+            files = [f for f in list_repo_files(repo_id) if f.lower().endswith(".gguf")]
+            if not files:
+                raise RuntimeError("模型仓库未找到 GGUF 文件")
+
+            quant_key = quant.lower()
+            matched = [f for f in files if quant_key in f.lower()]
+            if not matched:
+                raise RuntimeError(f"未找到匹配量化档位 {quant} 的 GGUF 文件")
+
+            matched.sort(key=len)
+            filename = matched[0]
+
+            logger.info(f"下载文件: {filename}")
+
+            # 下载模型
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=model_dir,
+                local_dir_use_symlinks=False,
+            )
+
+            logger.info("翻译模型下载完成")
+            return {"status": "ok", "message": f"翻译模型下载完成: {filename}"}
+        except ImportError:
+            raise HTTPException(status_code=500, detail="huggingface_hub 未安装")
+        except Exception as e:
+            logger.error(f"翻译模型下载失败: {e}")
+            raise HTTPException(status_code=500, detail=f"翻译模型下载失败: {e}")
+    else:
+        raise HTTPException(status_code=400, detail=f"未知的模型类型: {req.model_type}")
 
 
 class PreloadRequest(BaseModel):

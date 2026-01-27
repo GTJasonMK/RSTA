@@ -10,6 +10,19 @@ from pydantic import BaseModel
 from huggingface_hub import hf_hub_download, list_repo_files
 from llama_cpp import Llama
 
+# 项目根目录和配置
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPT_DIR.parent
+CONFIG_PATH = ROOT_DIR / "config.json"
+
+
+def load_config():
+    """加载配置文件"""
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
 
 LANG_MAP = {
     "en": "English",
@@ -105,7 +118,7 @@ def find_local_gguf(model_dir, quant):
     return matched[0]
 
 
-def resolve_model_path(repo_id, filename, model_dir):
+def resolve_model_path(repo_id, filename, model_dir, auto_download=False):
     candidate = Path(filename)
     if candidate.is_file():
         return str(candidate)
@@ -113,6 +126,31 @@ def resolve_model_path(repo_id, filename, model_dir):
         local_file = model_dir / filename
         if local_file.is_file():
             return str(local_file)
+
+    # 模型不存在，检查是否允许自动下载
+    if not auto_download:
+        download_url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+        target_path = model_dir / filename
+        raise RuntimeError(
+            f"\n{'='*60}\n"
+            f"翻译模型未找到！\n"
+            f"{'='*60}\n\n"
+            f"模型文件: {filename}\n"
+            f"目标路径: {target_path}\n\n"
+            f"请手动下载模型：\n"
+            f"  1. 访问: {download_url}\n"
+            f"  2. 下载文件并保存到: {target_path}\n\n"
+            f"或者在 config.json 中设置 local_service.auto_download = true 允许自动下载\n"
+            f"{'='*60}\n"
+        )
+
+    print(f"\n{'='*60}")
+    print(f"正在下载翻译模型...")
+    print(f"仓库: {repo_id}")
+    print(f"文件: {filename}")
+    print(f"目标: {model_dir}")
+    print(f"{'='*60}\n")
+
     return hf_hub_download(
         repo_id=repo_id,
         filename=filename,
@@ -122,9 +160,14 @@ def resolve_model_path(repo_id, filename, model_dir):
 
 
 def load_model():
+    # 加载配置
+    config = load_config()
+    local_service_cfg = config.get("local_service", {})
+    auto_download = bool(local_service_cfg.get("auto_download", False))
+
     repo_id = os.getenv("MODEL_REPO", "tencent/HY-MT1.5-1.8B-GGUF")
-    quant = os.getenv("QUANT", "Q6_K")
-    default_dir = Path(__file__).resolve().parents[1] / "models"
+    quant = os.getenv("QUANT", local_service_cfg.get("quant", "Q6_K"))
+    default_dir = ROOT_DIR / "models"
     model_dir = Path(os.getenv("MODEL_DIR", default_dir)).resolve()
     model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -135,7 +178,7 @@ def load_model():
             filename = str(local_candidate)
         else:
             filename = select_model_file(repo_id, quant)
-    model_path = resolve_model_path(repo_id, filename, model_dir)
+    model_path = resolve_model_path(repo_id, filename, model_dir, auto_download)
 
     n_ctx = int(os.getenv("N_CTX", "4096"))
     n_threads = int(os.getenv("N_THREADS", str(max(os.cpu_count() - 1, 1))))

@@ -145,6 +145,37 @@ const OCR_MODELS = [
 
 const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverPort }) => {
   const [activeTab, setActiveTab] = useState('general');
+  const [modelStatus, setModelStatus] = useState({ ocr: { downloaded: false }, translate: { downloaded: false } });
+  const [downloadingModel, setDownloadingModel] = useState(null); // 'ocr' | 'translate' | null
+
+  // 获取模型状态
+  useEffect(() => {
+    const fetchModelStatus = async () => {
+      try {
+        const res = await axios.get(`http://127.0.0.1:${serverPort}/models/status`);
+        setModelStatus(res.data);
+      } catch (err) {
+        console.warn('Failed to fetch model status:', err.message);
+      }
+    };
+    fetchModelStatus();
+  }, [serverPort]);
+
+  // 下载模型
+  const downloadModel = async (modelType) => {
+    setDownloadingModel(modelType);
+    try {
+      await axios.post(`http://127.0.0.1:${serverPort}/models/download`, { model_type: modelType }, { timeout: 600000 }); // 10分钟超时
+      // 刷新状态
+      const res = await axios.get(`http://127.0.0.1:${serverPort}/models/status`);
+      setModelStatus(res.data);
+    } catch (err) {
+      console.error(`Failed to download ${modelType} model:`, err.message);
+      alert(`下载失败: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setDownloadingModel(null);
+    }
+  };
 
   const updateConfig = (path, value) => {
     const newConfig = { ...config };
@@ -339,9 +370,39 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
                   </SettingRow>
                 </SettingGroup>
 
-                <SettingGroup title="模型目录">
+                <SettingGroup title="模型管理">
                   <SettingRow label="模型存储路径">
                     <Input value={config.model_dir || 'models'} onChange={(v) => updateConfig('model_dir', v)} className="w-64" />
+                  </SettingRow>
+                  <SettingRow label="OCR 模型" description={modelStatus.ocr?.downloaded ? '已下载' : '未下载'}>
+                    <button
+                      onClick={() => downloadModel('ocr')}
+                      disabled={downloadingModel !== null || modelStatus.ocr?.downloaded}
+                      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        modelStatus.ocr?.downloaded
+                          ? 'bg-green-100 text-green-700 cursor-default'
+                          : downloadingModel === 'ocr'
+                          ? 'bg-stone-200 text-stone-500 cursor-wait'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white'
+                      }`}
+                    >
+                      {modelStatus.ocr?.downloaded ? 'OK' : downloadingModel === 'ocr' ? '下载中...' : '下载'}
+                    </button>
+                  </SettingRow>
+                  <SettingRow label="翻译模型" description={modelStatus.translate?.downloaded ? '已下载' : '未下载'}>
+                    <button
+                      onClick={() => downloadModel('translate')}
+                      disabled={downloadingModel !== null || modelStatus.translate?.downloaded}
+                      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        modelStatus.translate?.downloaded
+                          ? 'bg-green-100 text-green-700 cursor-default'
+                          : downloadingModel === 'translate'
+                          ? 'bg-stone-200 text-stone-500 cursor-wait'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white'
+                      }`}
+                    >
+                      {modelStatus.translate?.downloaded ? 'OK' : downloadingModel === 'translate' ? '下载中...' : '下载'}
+                    </button>
                   </SettingRow>
                 </SettingGroup>
               </>
