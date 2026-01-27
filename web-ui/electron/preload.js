@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld('electron', {
   // 系统通知
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', { title, body }),
 
+  // 更新托盘语言显示
+  updateTrayLanguage: (source, target) => ipcRenderer.invoke('update-tray-language', { source, target }),
+
   // 监听快捷键事件
   onSwapLanguages: (callback) => {
     const eventKey = 'swap-languages';

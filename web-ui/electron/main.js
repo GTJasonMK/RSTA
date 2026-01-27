@@ -391,41 +391,209 @@ ipcMain.handle('show-notification', (event, { title, body }) => {
 
 // --- Tray ---
 
-function createTray() {
-  // 使用简单的图标路径，如果没有图标文件则创建一个简单的图标
-  const iconPath = path.join(__dirname, '../assets/icon.png');
+// 语言代码到显示文字的映射（简短易读）
+const LANG_DISPLAY = {
+  'en': 'EN',
+  'zh': '中',
+  'zh-cn': '中',
+  'zh-hans': '中',
+  'zh-hant': '繁',
+  'ja': '日',
+  'ko': '韩',
+  'fr': 'FR',
+  'de': 'DE',
+  'es': 'ES',
+  'ru': 'RU',
+  'pt': 'PT',
+  'it': 'IT',
+  'vi': 'VI',
+};
+
+// 当前语言状态
+let currentSourceLang = 'en';
+let currentTargetLang = 'zh';
+
+// 创建带语言文字的托盘图标
+function createLanguageIcon(sourceLang, targetLang) {
   const { nativeImage } = require('electron');
 
-  let trayIcon;
-  try {
-    trayIcon = nativeImage.createFromPath(iconPath);
-    if (trayIcon.isEmpty()) {
-      throw new Error('Icon file is empty or invalid');
+  // 获取显示文字
+  const srcText = LANG_DISPLAY[sourceLang?.toLowerCase()] || sourceLang?.toUpperCase()?.slice(0, 2) || '??';
+  const tgtText = LANG_DISPLAY[targetLang?.toLowerCase()] || targetLang?.toUpperCase()?.slice(0, 2) || '??';
+
+  // 使用 32x32 尺寸以获得更好的可读性
+  const size = 32;
+  const canvas = Buffer.alloc(size * size * 4);
+
+  // 填充深色背景（圆角矩形效果通过边缘透明实现）
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      // 圆角效果：边角透明
+      const cornerRadius = 4;
+      const inCorner = (
+        (x < cornerRadius && y < cornerRadius && Math.sqrt((cornerRadius - x) ** 2 + (cornerRadius - y) ** 2) > cornerRadius) ||
+        (x >= size - cornerRadius && y < cornerRadius && Math.sqrt((x - (size - cornerRadius - 1)) ** 2 + (cornerRadius - y) ** 2) > cornerRadius) ||
+        (x < cornerRadius && y >= size - cornerRadius && Math.sqrt((cornerRadius - x) ** 2 + (y - (size - cornerRadius - 1)) ** 2) > cornerRadius) ||
+        (x >= size - cornerRadius && y >= size - cornerRadius && Math.sqrt((x - (size - cornerRadius - 1)) ** 2 + (y - (size - cornerRadius - 1)) ** 2) > cornerRadius)
+      );
+
+      if (inCorner) {
+        canvas[idx + 3] = 0; // 透明
+      } else {
+        // 深灰色背景
+        canvas[idx] = 45;      // R
+        canvas[idx + 1] = 45;  // G
+        canvas[idx + 2] = 48;  // B
+        canvas[idx + 3] = 255; // A
+      }
     }
-  } catch (e) {
-    // 创建一个 16x16 的简单橙色圆形图标
-    const size = 16;
-    const canvas = Buffer.alloc(size * size * 4);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const idx = (y * size + x) * 4;
-        const dx = x - size / 2;
-        const dy = y - size / 2;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < size / 2 - 1) {
-          // 橙色填充 (RGBA)
-          canvas[idx] = 245;     // R
-          canvas[idx + 1] = 158; // G
-          canvas[idx + 2] = 11;  // B
-          canvas[idx + 3] = 255; // A
-        } else {
-          // 透明
-          canvas[idx + 3] = 0;
+  }
+
+  // 简单的像素字体绘制函数（3x5 像素字体）
+  const font3x5 = {
+    'E': [[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,1,1]],
+    'N': [[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+    'F': [[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,0,0]],
+    'R': [[1,1,0],[1,0,1],[1,1,0],[1,0,1],[1,0,1]],
+    'D': [[1,1,0],[1,0,1],[1,0,1],[1,0,1],[1,1,0]],
+    'S': [[0,1,1],[1,0,0],[0,1,0],[0,0,1],[1,1,0]],
+    'P': [[1,1,0],[1,0,1],[1,1,0],[1,0,0],[1,0,0]],
+    'I': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[1,1,1]],
+    'T': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[0,1,0]],
+    'V': [[1,0,1],[1,0,1],[1,0,1],[0,1,0],[0,1,0]],
+    'U': [[1,0,1],[1,0,1],[1,0,1],[1,0,1],[0,1,0]],
+    '?': [[0,1,0],[1,0,1],[0,0,1],[0,1,0],[0,1,0]],
+  };
+
+  // 中文字符使用 5x5 简化版
+  const fontCJK = {
+    '中': [[0,0,1,0,0],[1,1,1,1,1],[1,0,1,0,1],[1,1,1,1,1],[0,0,1,0,0]],
+    '繁': [[1,1,1,1,1],[0,1,0,1,0],[1,1,1,1,1],[0,1,0,1,0],[1,0,1,0,1]],
+    '日': [[1,1,1,1,1],[1,0,0,0,1],[1,1,1,1,1],[1,0,0,0,1],[1,1,1,1,1]],
+    '韩': [[1,0,1,0,1],[1,1,1,1,1],[0,0,1,0,0],[1,1,1,1,1],[1,0,0,0,1]],
+  };
+
+  // 绘制像素的辅助函数
+  function drawPixel(x, y, r, g, b) {
+    if (x >= 0 && x < size && y >= 0 && y < size) {
+      const idx = (y * size + x) * 4;
+      canvas[idx] = r;
+      canvas[idx + 1] = g;
+      canvas[idx + 2] = b;
+      canvas[idx + 3] = 255;
+    }
+  }
+
+  // 绘制字符
+  function drawChar(char, startX, startY, r, g, b, scale = 2) {
+    let charData = font3x5[char.toUpperCase()];
+    let charWidth = 3;
+    let charHeight = 5;
+
+    // 检查是否是 CJK 字符
+    if (fontCJK[char]) {
+      charData = fontCJK[char];
+      charWidth = 5;
+      charHeight = 5;
+    }
+
+    if (!charData) {
+      charData = font3x5['?'];
+    }
+
+    for (let cy = 0; cy < charHeight; cy++) {
+      for (let cx = 0; cx < charWidth; cx++) {
+        if (charData[cy][cx]) {
+          for (let sy = 0; sy < scale; sy++) {
+            for (let sx = 0; sx < scale; sx++) {
+              drawPixel(startX + cx * scale + sx, startY + cy * scale + sy, r, g, b);
+            }
+          }
         }
       }
     }
-    trayIcon = nativeImage.createFromBuffer(canvas, { width: size, height: size });
+    return charWidth * scale;
   }
+
+  // 绘制字符串
+  function drawString(str, startX, startY, r, g, b, scale = 2) {
+    let x = startX;
+    for (const char of str) {
+      const charWidth = drawChar(char, x, startY, r, g, b, scale);
+      x += charWidth + scale; // 字符间距
+    }
+    return x - startX - scale; // 返回总宽度
+  }
+
+  // 计算字符串宽度
+  function measureString(str, scale = 2) {
+    let width = 0;
+    for (const char of str) {
+      const isCJK = !!fontCJK[char];
+      const charWidth = isCJK ? 5 : 3;
+      width += charWidth * scale + scale; // 字符宽度 + 间距
+    }
+    return width - scale; // 减去最后一个间距
+  }
+
+  // 绘制箭头 (简化版)
+  function drawArrow(startX, startY, r, g, b) {
+    // 横线
+    for (let x = 0; x < 6; x++) {
+      drawPixel(startX + x, startY, r, g, b);
+      drawPixel(startX + x, startY + 1, r, g, b);
+    }
+    // 箭头尖
+    drawPixel(startX + 4, startY - 1, r, g, b);
+    drawPixel(startX + 5, startY - 1, r, g, b);
+    drawPixel(startX + 4, startY + 2, r, g, b);
+    drawPixel(startX + 5, startY + 2, r, g, b);
+  }
+
+  // 绘制源语言（上半部分，白色）
+  const srcWidth = measureString(srcText, 2);
+  const srcX = Math.floor((size - srcWidth) / 2);
+  drawString(srcText, srcX, 3, 255, 255, 255, 2);
+
+  // 绘制箭头（中间，橙色）
+  drawArrow(13, 15, 245, 158, 11);
+
+  // 绘制目标语言（下半部分，橙色）
+  const tgtWidth = measureString(tgtText, 2);
+  const tgtX = Math.floor((size - tgtWidth) / 2);
+  drawString(tgtText, tgtX, 19, 245, 158, 11, 2);
+
+  return nativeImage.createFromBuffer(canvas, { width: size, height: size });
+}
+
+// 更新托盘图标
+function updateTrayIcon(sourceLang, targetLang) {
+  if (!tray) return;
+
+  currentSourceLang = sourceLang || currentSourceLang;
+  currentTargetLang = targetLang || currentTargetLang;
+
+  const icon = createLanguageIcon(currentSourceLang, currentTargetLang);
+  tray.setImage(icon);
+
+  // 更新提示文字
+  const srcDisplay = LANG_DISPLAY[currentSourceLang?.toLowerCase()] || currentSourceLang;
+  const tgtDisplay = LANG_DISPLAY[currentTargetLang?.toLowerCase()] || currentTargetLang;
+  tray.setToolTip(`Screen Translate: ${srcDisplay} -> ${tgtDisplay}`);
+}
+
+// IPC: 更新托盘语言显示
+ipcMain.handle('update-tray-language', (event, { source, target }) => {
+  updateTrayIcon(source, target);
+  return { success: true };
+});
+
+function createTray() {
+  const { nativeImage } = require('electron');
+
+  // 创建初始图标（使用默认语言）
+  const trayIcon = createLanguageIcon(currentSourceLang, currentTargetLang);
 
   tray = new Tray(trayIcon);
 
@@ -465,7 +633,7 @@ function createTray() {
     }
   ]);
 
-  tray.setToolTip('Screen Translate');
+  tray.setToolTip(`Screen Translate: ${LANG_DISPLAY[currentSourceLang] || currentSourceLang} -> ${LANG_DISPLAY[currentTargetLang] || currentTargetLang}`);
   tray.setContextMenu(contextMenu);
 
   tray.on('double-click', () => {

@@ -937,11 +937,21 @@ const FloatingOverlay = () => {
         className="electron-drag relative bg-stone-900/90 text-white text-sm px-2 py-1 pr-6 rounded shadow-lg cursor-move"
         style={{ width: 'max-content', minWidth: 60, maxWidth }}
       >
-      {status === 'processing' ? (
+      {/* 根据状态显示不同内容 */}
+      {(status === 'processing' || status === 'ocr' || status === 'translating' ||
+        status === 'ocr_loading' || status === 'translate_loading') ? (
         <div className="flex items-center gap-2 text-stone-400">
           <Loader2 size={14} className="animate-spin" />
-          <span>Translating...</span>
+          <span>
+            {status === 'ocr' && 'Recognizing text...'}
+            {status === 'ocr_loading' && 'Loading OCR model...'}
+            {status === 'translating' && 'Translating...'}
+            {status === 'translate_loading' && 'Loading translate model...'}
+            {status === 'processing' && 'Processing...'}
+          </span>
         </div>
+      ) : status === 'error' ? (
+        <span className="text-red-400">{text || 'Error occurred'}</span>
       ) : (
         <>
           <span className="electron-no-drag no-drag block leading-snug select-text cursor-text" style={{ wordBreak: 'break-word' }}>{text}</span>
@@ -1024,6 +1034,10 @@ const App = () => {
     if (isOverlay) return;
     axios.get(`${baseUrl}/config`).then(res => {
       setConfig(res.data);
+      // 初始化托盘图标语言显示
+      if (window.electron?.updateTrayLanguage) {
+        window.electron.updateTrayLanguage(res.data.source_lang, res.data.target_lang);
+      }
     }).catch(err => {
       console.error('[Config] Failed to load config:', err.message);
     });
@@ -1107,13 +1121,18 @@ const App = () => {
     // 先更新配置
     setConfig(newConfig);
 
+    // 更新托盘图标
+    if (window.electron?.updateTrayLanguage) {
+      window.electron.updateTrayLanguage(newConfig.source_lang, newConfig.target_lang);
+    }
+
     // 如果是语言切换，显示通知
     if (isSwap && showNotif && window.electron?.showNotification) {
       const fromLang = getLangName(newConfig.target_lang); // 交换后的 target 是原来的 source
       const toLang = getLangName(newConfig.source_lang);   // 交换后的 source 是原来的 target
       window.electron.showNotification(
         'Language Swapped',
-        `${fromLang} → ${toLang}`
+        `${fromLang} -> ${toLang}`
       );
     }
 
@@ -1163,18 +1182,61 @@ const App = () => {
     const overlayId = data.overlayId; // 获取对应的 overlay ID
 
     console.log('[Capture] Processing started, overlayId:', overlayId);
-    window.electron.updateOverlay({ overlayId, status: 'processing', text: '' });
+    window.electron.updateOverlay({ overlayId, status: 'ocr', text: '' });
 
     try {
       console.log('[Capture] Cropping image...');
       const croppedImage = await cropImage(data.image, data.bounds);
       console.log('[Capture] Image cropped, calling OCR...');
 
-      const ocrRes = await axios.post(`${currentBaseUrl}/ocr`, {
-        image: croppedImage.split(',')[1],
-        lang: currentConfig.source_lang,
-        model_type: currentConfig.paddleocr?.model_type || 'mobile'
-      });
+      let ocrRes;
+      try {
+        ocrRes = await axios.post(`${currentBaseUrl}/ocr`, {
+          image: croppedImage.split(',')[1],
+          lang: currentConfig.source_lang,
+          model_type: currentConfig.paddleocr?.model_type || 'mobile'
+        });
+      } catch (ocrErr) {
+        // 检查是否是模型加载中的 503 错误
+        if (ocrErr.response?.status === 503) {
+          const detail = ocrErr.response?.data?.detail || '';
+          if (detail.includes('加载中') || detail.includes('loading')) {
+            window.electron.updateOverlay({ overlayId, status: 'ocr_loading', text: '' });
+            // 轮询等待模型加载完成
+            let retryCount = 0;
+            const maxRetries = 60; // 最多等待 60 次 * 2秒 = 2分钟
+            while (retryCount < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              retryCount++;
+              try {
+                // 检查加载状态
+                const statusRes = await axios.get(`${currentBaseUrl}/loading_status`);
+                if (!statusRes.data.ocr?.loading) {
+                  // 模型加载完成，重试 OCR
+                  window.electron.updateOverlay({ overlayId, status: 'ocr', text: '' });
+                  ocrRes = await axios.post(`${currentBaseUrl}/ocr`, {
+                    image: croppedImage.split(',')[1],
+                    lang: currentConfig.source_lang,
+                    model_type: currentConfig.paddleocr?.model_type || 'mobile'
+                  });
+                  break;
+                }
+              } catch (retryErr) {
+                if (retryErr.response?.status !== 503) {
+                  throw retryErr;
+                }
+              }
+            }
+            if (!ocrRes) {
+              throw new Error('OCR model loading timeout');
+            }
+          } else {
+            throw ocrErr;
+          }
+        } else {
+          throw ocrErr;
+        }
+      }
 
       // 验证 OCR 响应结构
       if (!ocrRes.data || typeof ocrRes.data.text !== 'string') {
@@ -1188,21 +1250,65 @@ const App = () => {
         return;
       }
 
+      // 更新状态为翻译中
+      window.electron.updateOverlay({ overlayId, status: 'translating', text: '' });
       console.log('[Capture] Translating (stream)...');
 
       // 使用流式翻译
-      const response = await fetch(`${currentBaseUrl}/translate_stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: ocrText,
-          source: currentConfig.source_lang,
-          target: currentConfig.target_lang
-        })
-      });
+      let response;
+      try {
+        response = await fetch(`${currentBaseUrl}/translate_stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: ocrText,
+            source: currentConfig.source_lang,
+            target: currentConfig.target_lang
+          })
+        });
+      } catch (fetchErr) {
+        throw fetchErr;
+      }
+
+      // 检查翻译模型加载状态
+      if (response.status === 503) {
+        const errorData = await response.json().catch(() => ({}));
+        const detail = errorData.detail || '';
+        if (detail.includes('加载中') || detail.includes('loading')) {
+          window.electron.updateOverlay({ overlayId, status: 'translate_loading', text: '' });
+          // 轮询等待模型加载完成
+          let retryCount = 0;
+          const maxRetries = 60; // 最多等待 60 次 * 2秒 = 2分钟
+          while (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            retryCount++;
+            try {
+              // 检查加载状态
+              const statusRes = await axios.get(`${currentBaseUrl}/loading_status`);
+              if (!statusRes.data.translate?.loading) {
+                // 模型加载完成，重试翻译
+                window.electron.updateOverlay({ overlayId, status: 'translating', text: '' });
+                response = await fetch(`${currentBaseUrl}/translate_stream`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    text: ocrText,
+                    source: currentConfig.source_lang,
+                    target: currentConfig.target_lang
+                  })
+                });
+                if (response.ok) break;
+              }
+            } catch (retryErr) {
+              // 继续等待
+            }
+          }
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(`Translation failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Translation failed: ${response.status}`);
       }
 
       const reader = response.body.getReader();
@@ -1224,6 +1330,14 @@ const App = () => {
             }
             try {
               const parsed = JSON.parse(lineData);
+              // 忽略连接确认事件和错误事件
+              if (parsed.status === 'connected') {
+                continue;
+              }
+              if (parsed.error) {
+                console.error('[Translate] Stream error:', parsed.error);
+                continue;
+              }
               if (parsed.token) {
                 translatedText += parsed.token;
                 window.electron.updateOverlay({ overlayId, status: 'streaming', text: translatedText, ocrText });

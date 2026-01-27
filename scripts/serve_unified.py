@@ -1209,7 +1209,9 @@ def translate(req: TranslateRequest):
 
 
 @app.post("/translate_stream")
-def translate_stream(req: TranslateRequest):
+async def translate_stream(req: TranslateRequest):
+    import asyncio
+
     text = (req.q or req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
@@ -1227,12 +1229,19 @@ def translate_stream(req: TranslateRequest):
 
     prompt = build_prompt(req.source, req.target, text)
 
-    def generator():
+    async def generator():
         import time
         start_time = time.perf_counter()
         stream = None
         token_count = 0
         translated_text = ""
+        first_token_time = None
+
+        # 发送初始事件，确认连接已建立
+        yield "data: {\"status\": \"connected\"}\n\n"
+        # 让出控制权，确保初始事件被发送
+        await asyncio.sleep(0)
+
         # 使用锁防止并发访问，llama-cpp-python 不是线程安全的
         with STATE._translate_lock:
             try:
@@ -1249,18 +1258,28 @@ def translate_stream(req: TranslateRequest):
                 for chunk in stream:
                     token = chunk.get("choices", [{}])[0].get("text", "")
                     if token:
+                        if first_token_time is None:
+                            first_token_time = time.perf_counter()
+                            prompt_time = (first_token_time - start_time) * 1000
+                            logger.debug(f"[Translate-Stream] First token after {prompt_time:.0f}ms")
                         token_count += 1
                         translated_text += token
-                        payload = json.dumps({"token": token})
+                        payload = json.dumps({"token": token}, ensure_ascii=False)
                         yield f"data: {payload}\n\n"
+                        # 每个 token 后让出控制权，确保数据被发送
+                        await asyncio.sleep(0)
                 yield "data: [DONE]\n\n"
                 # 打印时间日志
                 elapsed = (time.perf_counter() - start_time) * 1000
-                logger.info(f"[Translate-Stream] {elapsed:.0f}ms | {token_count} tokens | {len(text)}->{len(translated_text)} chars")
+                gen_time = (time.perf_counter() - first_token_time) * 1000 if first_token_time else 0
+                logger.info(f"[Translate-Stream] {elapsed:.0f}ms total | {gen_time:.0f}ms gen | {token_count} tokens | {len(text)}->{len(translated_text)} chars")
             except GeneratorExit:
                 # 客户端断开连接，正常退出
                 elapsed = (time.perf_counter() - start_time) * 1000
                 logger.info(f"[Translate-Stream] {elapsed:.0f}ms | cancelled | {token_count} tokens")
+            except Exception as e:
+                logger.error(f"[Translate-Stream] Error: {e}")
+                yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
             finally:
                 # 确保流式迭代器被清理
                 if stream is not None:
@@ -1269,7 +1288,17 @@ def translate_stream(req: TranslateRequest):
                     except Exception:
                         pass
 
-    return StreamingResponse(generator(), media_type="text/event-stream")
+    # 添加禁用缓冲的响应头
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        }
+    )
 
 
 # ============== 配置 API ==============
