@@ -1,27 +1,5 @@
-try:
-    from argostranslate import translate as argos_translate
-except ImportError:
-    argos_translate = None
-
 import json
 import requests
-
-
-class ArgosTranslator:
-    def __init__(self, from_code, to_code):
-        if argos_translate is None:
-            raise RuntimeError("argostranslate is not installed")
-        if from_code == "auto":
-            raise ValueError("Argos translator does not support auto source language")
-        self.from_code = from_code
-        self.to_code = to_code
-        if not has_argos_language_pair(from_code, to_code):
-            raise RuntimeError(
-                f"Argos 语言包缺失：{from_code} -> {to_code}。请安装对应语言包。"
-            )
-
-    def translate(self, text):
-        return argos_translate.translate(text, self.from_code, self.to_code)
 
 
 class LibreTranslateTranslator:
@@ -202,31 +180,12 @@ class UnifiedServiceTranslator:
                     pass
 
 
-def has_argos_language_pair(from_code, to_code):
-    if argos_translate is None:
-        return False
-    try:
-        languages = argos_translate.get_installed_languages()
-    except Exception:
-        return False
-    from_lang = None
-    to_lang = None
-    for lang in languages:
-        if lang.code == from_code:
-            from_lang = lang
-        if lang.code == to_code:
-            to_lang = lang
-    if from_lang is None or to_lang is None:
-        return False
-    return from_lang.get_translation(to_lang) is not None
-
-
 def create_translator(config):
-    translator_type = config.get("translator", "argos").lower()
+    translator_type = config.get("translator", "unified").lower()
     source_lang = config.get("source_lang", "en")
     target_lang = config.get("target_lang", "zh")
 
-    # 统一服务翻译器
+    # 统一服务翻译器 (HY-MT)
     if translator_type == "unified":
         service_cfg = config.get("unified_service", {})
         return UnifiedServiceTranslator(
@@ -238,12 +197,6 @@ def create_translator(config):
             timeout=service_cfg.get("timeout", 30)
         ), None
 
-    if translator_type == "argos":
-        if argos_translate is None:
-            raise RuntimeError("argostranslate 未安装。请安装 argostranslate 或更换其他翻译器。")
-        if not has_argos_language_pair(source_lang, target_lang):
-            raise RuntimeError(f"Argos 语言包缺失：{source_lang} -> {target_lang}。请安装对应语言包。")
-        return ArgosTranslator(source_lang, target_lang), None
     if translator_type == "libretranslate":
         lt = config.get("libretranslate", {})
         return LibreTranslateTranslator(

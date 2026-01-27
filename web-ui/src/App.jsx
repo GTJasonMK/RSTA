@@ -132,9 +132,8 @@ const LANGUAGES = [
 ];
 
 const TRANSLATORS = [
-  { value: 'unified', label: 'Unified Local (HY-MT)' },
+  { value: 'unified', label: 'HY-MT (本地)' },
   { value: 'libretranslate', label: 'LibreTranslate' },
-  { value: 'argos', label: 'Argos Translate' },
   { value: 'none', label: '不翻译' },
 ];
 

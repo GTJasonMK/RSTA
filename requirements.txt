@@ -15,7 +15,6 @@ pydantic>=2.5.0
 paddlepaddle>=2.6.0
 paddleocr>=2.7.0
 
-# 翻译
-argostranslate>=1.9.1
+# 翻译 (HY-MT GGUF)
 huggingface_hub>=0.20.0
 llama-cpp-python>=0.2.50

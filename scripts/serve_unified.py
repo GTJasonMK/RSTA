@@ -471,41 +471,6 @@ def do_ocr(image_bytes: bytes, model_type: str, lang: str) -> str:
 
 # ============== 翻译功能 ==============
 
-# 导入 Argos 翻译支持
-try:
-    from argostranslate import translate as argos_translate
-except ImportError:
-    argos_translate = None
-
-
-def has_argos_language_pair(from_code, to_code):
-    """检查 Argos 是否支持该语言对"""
-    if argos_translate is None:
-        return False
-    try:
-        languages = argos_translate.get_installed_languages()
-    except Exception:
-        return False
-    from_lang = None
-    to_lang = None
-    for lang in languages:
-        if lang.code == from_code:
-            from_lang = lang
-        if lang.code == to_code:
-            to_lang = lang
-    if from_lang is None or to_lang is None:
-        return False
-    return from_lang.get_translation(to_lang) is not None
-
-
-def translate_with_argos(text: str, source: str, target: str) -> str:
-    """使用 Argos 翻译"""
-    if argos_translate is None:
-        raise RuntimeError("argostranslate 未安装")
-    if not has_argos_language_pair(source, target):
-        raise RuntimeError(f"Argos 语言包缺失: {source} -> {target}")
-    return argos_translate.translate(text, source, target)
-
 
 def normalize_lang(lang: str) -> str:
     key = lang.strip().lower()
@@ -530,16 +495,16 @@ def load_translate_model():
     try:
         from huggingface_hub import hf_hub_download, list_repo_files
     except ImportError as e:
-        logger.warning(f"huggingface_hub 导入失败: {e}，将使用 Argos 翻译")
+        logger.warning(f"huggingface_hub 导入失败: {e}")
         return None, None, None
 
     try:
         from llama_cpp import Llama
     except ImportError as e:
-        logger.warning(f"llama-cpp-python 导入失败: {e}，将使用 Argos 翻译")
+        logger.warning(f"llama-cpp-python 导入失败: {e}")
         return None, None, None
     except Exception as e:
-        logger.warning(f"llama-cpp-python 加载异常: {e}，将使用 Argos 翻译")
+        logger.warning(f"llama-cpp-python 加载异常: {e}")
         return None, None, None
 
     repo_id = os.getenv("MODEL_REPO", "tencent/HY-MT1.5-1.8B-GGUF")
@@ -625,23 +590,8 @@ def load_translate_model():
 @asynccontextmanager
 async def lifespan(app):
     """应用生命周期管理"""
-    # 启动时加载模型
-    model, repo, filename = load_translate_model()
-    STATE.translate_model = model
-    STATE.translate_repo = repo
-    STATE.translate_file = filename
-
-    # 预加载 OCR 模型
-    preload_ocr = [m.strip() for m in os.getenv("PRELOAD_OCR", "mobile").split(",") if m.strip()]
-    ocr_lang = os.getenv("OCR_LANG", "en")
-    for model_type in preload_ocr:
-        model_type = model_type.strip()
-        if model_type in ("mobile", "server"):
-            try:
-                logger.info(f"Preloading OCR model: {model_type}_{ocr_lang}...")
-                STATE.load_ocr_engine(model_type, ocr_lang)
-            except Exception as e:
-                logger.warning(f"Failed to preload OCR model {model_type}_{ocr_lang}: {e}")
+    # 不再自动加载模型，由用户手动触发下载和加载
+    logger.info("服务启动完成，模型将在首次使用时按需加载")
 
     yield  # 应用运行中
 
@@ -678,8 +628,8 @@ def health():
         "ocr_loaded": list(STATE.ocr_engines.keys()),
         "translate_repo": STATE.translate_repo,
         "translate_file": STATE.translate_file,
-        "translate_available": STATE.translate_model is not None or argos_translate is not None,
-        "translate_backend": "llama" if STATE.translate_model is not None else ("argos" if argos_translate is not None else None),
+        "translate_available": STATE.translate_model is not None,
+        "translate_backend": "llama" if STATE.translate_model is not None else None,
     }
 
 
@@ -901,17 +851,7 @@ def translate(req: TranslateRequest):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
 
-    # 使用 Argos 翻译
-    if argos_translate is not None:
-        try:
-            translated = translate_with_argos(text, req.source, req.target)
-            elapsed = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[Translate-Argos] {elapsed:.0f}ms | {len(text)}->{len(translated)} chars")
-            return TranslateResponse(translatedText=translated)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Argos translation failed: {e}")
-
-    raise HTTPException(status_code=503, detail="No translation backend available (install llama-cpp-python or argostranslate)")
+    raise HTTPException(status_code=503, detail="翻译模型未加载，请先在设置中下载翻译模型")
 
 
 @app.post("/translate_stream")
@@ -968,25 +908,7 @@ def translate_stream(req: TranslateRequest):
 
         return StreamingResponse(generator(), media_type="text/event-stream")
 
-    # 使用 Argos (不支持流式，一次性返回)
-    if argos_translate is not None:
-        try:
-            import time
-            start_time = time.perf_counter()
-            translated = translate_with_argos(text, req.source, req.target)
-            elapsed = (time.perf_counter() - start_time) * 1000
-            logger.info(f"[Translate-Stream] {elapsed:.0f}ms | argos | {len(text)}->{len(translated)} chars")
-
-            def argos_generator():
-                payload = json.dumps({"token": translated})
-                yield f"data: {payload}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(argos_generator(), media_type="text/event-stream")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Argos translation failed: {e}")
-
-    raise HTTPException(status_code=503, detail="No translation backend available")
+    raise HTTPException(status_code=503, detail="翻译模型未加载，请先在设置中下载翻译模型")
 
 
 # ============== 配置 API ==============

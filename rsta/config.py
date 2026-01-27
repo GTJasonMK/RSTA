@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
     "ocr_engine": "paddleocr",
     "source_lang": "en",
     "target_lang": "zh",
-    "translator": "argos",
+    "translator": "unified",
     "libretranslate": {
         "url": "http://localhost:5000/translate",
         "api_key": "",
