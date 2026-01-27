@@ -23,7 +23,6 @@ DEFAULT_CONFIG = {
         "lang": "en",  # 与 source_lang 保持一致
         "ocr_version": "PP-OCRv5",
         "model_type": "mobile",
-        "preload_models": [],
         "use_textline_orientation": True,
         "use_gpu": False,
         "auto_download": False,
@@ -42,6 +41,7 @@ DEFAULT_CONFIG = {
         "type": "hymt_gguf",
         "host": "127.0.0.1",
         "port": 8092,
+        "model_repo": "tencent/HY-MT1.5-1.8B-GGUF",
         "quant": "Q6_K",
         "auto_download": False,
         "auto_install": True,
@@ -60,8 +60,8 @@ DEFAULT_CONFIG = {
         "script_unix": "scripts/deploy_unified.sh"
     },
     "startup": {
-        "auto_load_ocr": True,
-        "auto_load_translator": True,
+        "auto_load_ocr": False,  # 默认禁用，按需加载更快启动
+        "auto_load_translator": False,  # 默认禁用，按需加载更快启动
         "auto_start_unified_service": False,
         "auto_start_local_service": False
     },

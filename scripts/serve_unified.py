@@ -23,17 +23,12 @@ os.environ["FLAGS_pir_subgraph_saving_dir"] = ""
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # 注意：不要禁用 MKLDNN，否则 CPU 推理会非常慢
 
-# 设置 PaddleOCR/PaddleX 模型下载目录到项目的 models 目录
+# 项目根目录（用于配置文件路径等）
 from pathlib import Path as _Path
 _SCRIPT_DIR = _Path(__file__).resolve().parent.parent
-_MODELS_DIR = _SCRIPT_DIR / "models"
-_PADDLEOCR_HOME = _MODELS_DIR / "paddleocr"
-_PADDLEOCR_HOME.mkdir(parents=True, exist_ok=True)
-# 设置所有可能的缓存路径环境变量
-os.environ["PADDLEOCR_HOME"] = str(_PADDLEOCR_HOME)
-os.environ["PADDLE_HOME"] = str(_MODELS_DIR / "paddle")
-os.environ["PADDLEX_HOME"] = str(_MODELS_DIR / "paddlex")
-os.environ["PADDLE_PDX_CACHE_HOME"] = str(_MODELS_DIR / "paddlex")
+
+# 注意：PaddleOCR 环境变量由 initialize_ocr_environment() 统一设置
+# 不在此处设置，避免与配置文件中的 model_dir 冲突
 
 import base64
 import io
@@ -211,14 +206,33 @@ class ServiceState:
         self._config = None
 
     def _load_config(self):
-        """加载配置文件"""
+        """加载配置文件（使用 rsta.config 确保默认值被合并）"""
         if self._config is None:
-            config_path = _SCRIPT_DIR / "config.json"  # _SCRIPT_DIR 是项目根目录
-            if config_path.exists():
-                with open(config_path, "r", encoding="utf-8") as f:
-                    self._config = json.load(f)
-            else:
-                self._config = {}
+            try:
+                # 确保项目根目录在 sys.path 中
+                import sys
+                project_root = str(_SCRIPT_DIR)
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
+                from rsta.config import load_config
+                self._config = load_config()
+            except ImportError as e:
+                # 如果导入失败，使用简单的加载逻辑
+                logger.warning(f"无法导入 rsta.config，使用 JSON 加载 fallback: {e}")
+                config_path = _SCRIPT_DIR / "config.json"
+                try:
+                    if config_path.exists():
+                        with open(config_path, "r", encoding="utf-8") as f:
+                            self._config = json.load(f)
+                    else:
+                        logger.warning(f"配置文件不存在: {config_path}")
+                        self._config = {}
+                except json.JSONDecodeError as je:
+                    logger.error(f"配置文件 JSON 解析错误: {je}")
+                    self._config = {}
+                except Exception as fe:
+                    logger.error(f"配置文件读取失败: {fe}")
+                    self._config = {}
         return self._config
 
     def ensure_translate_model(self):
@@ -306,23 +320,23 @@ class ServiceState:
             except ImportError:
                 raise RuntimeError("OCR 引擎未安装，请安装 rapidocr-onnxruntime 或 paddleocr")
 
-            # 检查模型是否存在（检查 PaddleX 目录，PaddleOCR v5 使用 PaddleX）
-            has_models = False
-            paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
-            if paddlex_home.exists():
-                official_models_dir = paddlex_home / "official_models"
-                if official_models_dir.exists():
-                    model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
-                    for model_dir_check in model_dirs:
-                        if list(model_dir_check.glob("*.pdiparams")) or list(model_dir_check.glob("*.pdparams")):
-                            has_models = True
-                            break
-            # 兼容旧版 PaddleOCR
-            if not has_models:
-                paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
-                if paddleocr_home.exists():
-                    whl_dir = paddleocr_home / "whl"
-                    has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
+            # 使用共享函数检查模型是否存在
+            try:
+                from rsta.ocr import initialize_ocr_environment, check_paddle_models_exist
+                paddleocr_home, paddlex_home = initialize_ocr_environment(config)
+                has_models = check_paddle_models_exist(paddlex_home, paddleocr_home)
+            except ImportError:
+                # 如果导入失败，使用简单的检查逻辑
+                has_models = False
+                paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
+                if paddlex_home.exists():
+                    official_models_dir = paddlex_home / "official_models"
+                    if official_models_dir.exists():
+                        model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
+                        for model_dir_check in model_dirs:
+                            if list(model_dir_check.glob("*.pdiparams")) or list(model_dir_check.glob("*.pdparams")):
+                                has_models = True
+                                break
 
             if not has_models and not auto_download:
                 raise RuntimeError(
@@ -342,11 +356,7 @@ class ServiceState:
 
             ocr_lang = OCR_LANG_MAP.get(lang, "en")
 
-            # 读取配置文件中的 paddleocr 参数
-            config = self._load_config()
-            paddle_cfg = config.get("paddleocr", {})
-
-            # PaddleOCR 配置
+            # PaddleOCR 配置（复用之前加载的 paddle_cfg）
             cpu_count = os.cpu_count() or 4
             kwargs = {
                 "lang": ocr_lang,
@@ -572,8 +582,13 @@ def load_translate_model():
         logger.warning(f"llama-cpp-python 加载异常: {e}")
         return None, None, None
 
-    repo_id = os.getenv("MODEL_REPO", "tencent/HY-MT1.5-1.8B-GGUF")
-    quant = os.getenv("QUANT", "Q6_K")
+    # 从配置文件读取设置（优先级：环境变量 > config.json > 默认值）
+    config = STATE._load_config()
+    local_service_cfg = config.get("local_service", {})
+
+    repo_id = os.getenv("MODEL_REPO") or local_service_cfg.get("model_repo", "tencent/HY-MT1.5-1.8B-GGUF")
+    quant = os.getenv("QUANT") or local_service_cfg.get("quant", "Q6_K")
+
     default_dir = Path(__file__).resolve().parents[1] / "models"
     model_dir = Path(os.getenv("MODEL_DIR", default_dir)).resolve()
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -655,12 +670,84 @@ def load_translate_model():
 @asynccontextmanager
 async def lifespan(app):
     """应用生命周期管理"""
-    # 不再自动加载模型，由用户手动触发下载和加载
-    logger.info("服务启动完成，模型将在首次使用时按需加载")
+    import threading
+
+    config = STATE._load_config()
+    startup_cfg = config.get("startup", {})
+    paddle_cfg = config.get("paddleocr", {})
+    unified_cfg = config.get("unified_service", {})
+
+    logger.info("=" * 60)
+    logger.info("统一服务快速启动中...")
+    logger.info("=" * 60)
+
+    # 快速检查模型状态（不阻塞）
+    try:
+        from rsta.ocr import get_models_status
+        status = get_models_status(config)
+        ocr_status = status.get("ocr", {})
+        translate_status = status.get("translate", {})
+
+        logger.info(f"  OCR Mobile: {'已下载' if ocr_status.get('mobile_downloaded') else '未下载'}")
+        logger.info(f"  OCR Server: {'已下载' if ocr_status.get('server_downloaded') else '未下载'}")
+        logger.info(f"  翻译模型: {'已下载' if translate_status.get('downloaded') else '未下载'}")
+    except Exception as e:
+        logger.warning(f"模型状态检查失败: {e}")
+
+    # 后台异步预加载函数
+    def background_preload():
+        """在后台线程中预加载模型"""
+        try:
+            # 预加载 OCR 模型
+            if startup_cfg.get("auto_load_ocr", False):
+                model_type = paddle_cfg.get("model_type", "mobile")
+                lang = config.get("source_lang", "en")
+                logger.info(f"[后台] 正在预加载 OCR 模型: {model_type} ({lang})...")
+                try:
+                    STATE.load_ocr_engine(model_type, lang)
+                    logger.info(f"[后台] OCR 模型加载完成: {model_type}_{lang}")
+                except Exception as e:
+                    logger.warning(f"[后台] OCR 模型加载失败: {e}")
+
+                # 加载 preload_ocr 配置中的其他模型
+                preload_ocr_list = unified_cfg.get("preload_ocr", [])
+                for model_config in preload_ocr_list:
+                    try:
+                        m_type = model_config.get("type", "mobile")
+                        m_lang = model_config.get("lang", "en")
+                        cache_key = f"{m_type}_{m_lang}"
+                        if cache_key not in STATE.ocr_engines:
+                            STATE.load_ocr_engine(m_type, m_lang)
+                            logger.info(f"[后台] OCR 模型加载完成: {cache_key}")
+                    except Exception as e:
+                        logger.warning(f"[后台] OCR 模型 {model_config} 加载失败: {e}")
+
+            # 预加载翻译模型
+            if startup_cfg.get("auto_load_translator", False):
+                logger.info("[后台] 正在预加载翻译模型...")
+                if STATE.ensure_translate_model():
+                    logger.info(f"[后台] 翻译模型加载完成: {STATE.translate_file}")
+                else:
+                    logger.warning("[后台] 翻译模型加载失败或未找到")
+        except Exception as e:
+            logger.error(f"[后台] 预加载失败: {e}")
+
+    # 如果启用了预加载，在后台线程中执行（不阻塞启动）
+    if startup_cfg.get("auto_load_ocr", False) or startup_cfg.get("auto_load_translator", False):
+        logger.info("模型将在后台异步加载...")
+        preload_thread = threading.Thread(target=background_preload, daemon=True)
+        preload_thread.start()
+    else:
+        logger.info("模型将在首次使用时按需加载（快速启动模式）")
+
+    logger.info("=" * 60)
+    logger.info("服务启动完成，可以接收请求")
+    logger.info("=" * 60)
 
     yield  # 应用运行中
 
-    # 关闭时清理（如果需要）
+    # 关闭时清理
+    logger.info("服务正在关闭...")
 
 
 app = FastAPI(title="Unified OCR + Translate Service", lifespan=lifespan)
@@ -708,68 +795,53 @@ def list_models():
 
 
 @app.get("/models/status")
-def get_models_status():
+def get_models_status_endpoint():
     """获取模型下载状态"""
-    # 检查 OCR 模型（分别检查 mobile 和 server）
-    ocr_mobile_downloaded = False
-    ocr_server_downloaded = False
-    ocr_path = None
+    try:
+        from rsta.ocr import get_models_status as check_models_status
+        config = STATE._load_config()
+        return check_models_status(config)
+    except ImportError:
+        # 如果导入失败，使用简单的检查逻辑
+        ocr_mobile_downloaded = False
+        ocr_server_downloaded = False
+        ocr_path = None
 
-    # 检查 PaddleX 模型目录 (PaddleOCR v5 使用)
-    paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
-    if paddlex_home.exists():
-        official_models_dir = paddlex_home / "official_models"
-        if official_models_dir.exists():
-            ocr_path = str(official_models_dir)
-            # 检查 mobile 模型
-            mobile_det = official_models_dir / "PP-OCRv5_mobile_det"
-            mobile_rec = official_models_dir / "PP-OCRv5_mobile_rec"
-            if mobile_det.exists() and mobile_rec.exists():
-                det_ok = list(mobile_det.glob("*.pdiparams")) or list(mobile_det.glob("*.pdparams"))
-                rec_ok = list(mobile_rec.glob("*.pdiparams")) or list(mobile_rec.glob("*.pdparams"))
-                if det_ok and rec_ok:
+        paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
+        if paddlex_home.exists():
+            official_models_dir = paddlex_home / "official_models"
+            if official_models_dir.exists():
+                ocr_path = str(official_models_dir)
+                mobile_det = official_models_dir / "PP-OCRv5_mobile_det"
+                mobile_rec = official_models_dir / "PP-OCRv5_mobile_rec"
+                if mobile_det.exists() and mobile_rec.exists():
                     ocr_mobile_downloaded = True
-            # 检查 server 模型
-            server_det = official_models_dir / "PP-OCRv5_server_det"
-            server_rec = official_models_dir / "PP-OCRv5_server_rec"
-            if server_det.exists() and server_rec.exists():
-                det_ok = list(server_det.glob("*.pdiparams")) or list(server_det.glob("*.pdparams"))
-                rec_ok = list(server_rec.glob("*.pdiparams")) or list(server_rec.glob("*.pdparams"))
-                if det_ok and rec_ok:
+                server_det = official_models_dir / "PP-OCRv5_server_det"
+                server_rec = official_models_dir / "PP-OCRv5_server_rec"
+                if server_det.exists() and server_rec.exists():
                     ocr_server_downloaded = True
 
-    # 检查旧版 PaddleOCR 模型目录（兼容性）- 如果有则认为两种都有
-    if not ocr_mobile_downloaded and not ocr_server_downloaded:
-        paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
-        if paddleocr_home.exists():
-            whl_dir = paddleocr_home / "whl"
-            if whl_dir.exists() and any(whl_dir.iterdir()):
-                ocr_mobile_downloaded = True
-                ocr_server_downloaded = True
-                ocr_path = str(paddleocr_home)
+        translate_downloaded = False
+        translate_model_path = None
+        model_dir = _SCRIPT_DIR / "models"
+        if model_dir.exists():
+            gguf_files = list(model_dir.rglob("*.gguf"))
+            if gguf_files:
+                translate_downloaded = True
+                translate_model_path = str(gguf_files[0])
 
-    # 检查翻译模型
-    translate_downloaded = False
-    translate_model_path = None
-    model_dir = _SCRIPT_DIR / "models"
-    if model_dir.exists():
-        gguf_files = list(model_dir.rglob("*.gguf"))
-        if gguf_files:
-            translate_downloaded = True
-            translate_model_path = str(gguf_files[0])
-
-    return {
-        "ocr": {
-            "downloaded": ocr_mobile_downloaded or ocr_server_downloaded,  # 兼容旧版
-            "mobile_downloaded": ocr_mobile_downloaded,
-            "server_downloaded": ocr_server_downloaded,
-            "path": ocr_path,
-        },
-        "translate": {
-            "downloaded": translate_downloaded,
-            "path": translate_model_path,
+        return {
+            "ocr": {
+                "downloaded": ocr_mobile_downloaded or ocr_server_downloaded,
+                "mobile_downloaded": ocr_mobile_downloaded,
+                "server_downloaded": ocr_server_downloaded,
+                "path": ocr_path,
+            },
+            "translate": {
+                "downloaded": translate_downloaded,
+                "path": translate_model_path,
+            }
         }
-    }
 
 
 class DownloadModelRequest(BaseModel):

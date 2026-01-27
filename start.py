@@ -111,7 +111,7 @@ def start_electron():
     return proc
 
 
-def wait_for_vite(timeout=60):
+def wait_for_vite(timeout=30):
     """等待 Vite 服务器就绪"""
     import urllib.request
 
@@ -134,14 +134,14 @@ def wait_for_vite(timeout=60):
                     req.close()
                 except Exception:
                     pass
-        time.sleep(1)
+        time.sleep(0.5)  # 更快的轮询间隔
 
     log("警告: Vite 服务器启动超时")
     return False
 
 
-def wait_for_backend(timeout=180):
-    """等待后端服务就绪（模型加载可能需要较长时间）"""
+def wait_for_backend(timeout=30):
+    """等待后端服务就绪（快速启动模式下应该很快）"""
     import socket
 
     log("等待后端服务就绪...")
@@ -164,7 +164,7 @@ def wait_for_backend(timeout=180):
                     sock.close()
                 except Exception:
                     pass
-        time.sleep(0.5)
+        time.sleep(0.3)  # 更快的轮询间隔
 
     log("警告: 后端服务启动超时")
     return False
