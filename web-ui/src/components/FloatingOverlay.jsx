@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Loader2, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
+import { X, Loader2, ChevronDown, ChevronUp, BookOpen, Eye, EyeOff } from 'lucide-react';
+
+// 各区域最大高度配置
+const MAX_HEIGHT_TRANSLATE = 150;
+const MAX_HEIGHT_OCR = 80;
+const MAX_HEIGHT_ANALYSIS = 200;
 
 /**
  * 浮窗组件
@@ -19,6 +24,8 @@ const FloatingOverlay = () => {
   const [sourceLang, setSourceLang] = useState('en');
   const [targetLang, setTargetLang] = useState('zh');
   const containerRef = useRef(null);
+  const translateRef = useRef(null);
+  const [translateWidth, setTranslateWidth] = useState(null);
 
   // 加载配置获取 maxWidth 和 serverPort
   useEffect(() => {
@@ -62,6 +69,14 @@ const FloatingOverlay = () => {
     return () => window.electron.removeOnOverlayUpdate(handleUpdate);
   }, []);
 
+  // 测量翻译文本宽度
+  useEffect(() => {
+    if (translateRef.current && text && status === 'done') {
+      const width = translateRef.current.scrollWidth;
+      setTranslateWidth(width);
+    }
+  }, [text, status]);
+
   // 根据内容调整窗口大小
   useEffect(() => {
     if (containerRef.current) {
@@ -71,7 +86,7 @@ const FloatingOverlay = () => {
         height: Math.ceil(rect.height) + 4
       });
     }
-  }, [text, status, showOcr, showAnalysis, analysisText, analyzing]);
+  }, [text, status, showOcr, showAnalysis, analysisText, analyzing, translateWidth]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -180,17 +195,32 @@ const FloatingOverlay = () => {
         <span className="text-red-400">{text || 'Error occurred'}</span>
       ) : (
         <>
-          <span className="electron-no-drag no-drag block leading-snug select-text cursor-text" style={{ wordBreak: 'break-word' }}>{text}</span>
+          {/* 翻译结果 - 决定宽度 */}
+          <div
+            ref={translateRef}
+            className="electron-no-drag no-drag leading-snug select-text cursor-text overflow-y-auto"
+            style={{ wordBreak: 'break-word', maxHeight: MAX_HEIGHT_TRANSLATE }}
+          >
+            {text}
+          </div>
+          {/* 原文 - 使用翻译结果的宽度 */}
           {showOcr && ocrText && (
-            <div className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-400 text-xs select-text cursor-text">
+            <div
+              className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-400 text-xs select-text cursor-text overflow-y-auto"
+              style={{ width: translateWidth || 'auto', maxHeight: MAX_HEIGHT_OCR }}
+            >
               {ocrText}
             </div>
           )}
+          {/* 分析结果 - 使用翻译结果的宽度 */}
           {showAnalysis && (
-            <div className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-300 text-xs select-text cursor-text whitespace-pre-wrap">
+            <div
+              className="electron-no-drag no-drag mt-2 pt-2 border-t border-stone-700 text-stone-300 text-xs select-text cursor-text whitespace-pre-wrap overflow-y-auto"
+              style={{ width: translateWidth || 'auto', maxHeight: MAX_HEIGHT_ANALYSIS }}
+            >
               {analyzing ? (
-                <div className="flex items-center gap-2 text-stone-400">
-                  <Loader2 size={12} className="animate-spin" />
+                <div className="flex items-start gap-2 text-stone-400">
+                  <Loader2 size={12} className="animate-spin flex-shrink-0 mt-0.5" />
                   <span>{analysisText || 'Analyzing...'}</span>
                 </div>
               ) : (
@@ -209,21 +239,33 @@ const FloatingOverlay = () => {
       {/* 底部按钮区域 */}
       {status === 'done' && (
         <div className="absolute bottom-1 right-1 flex gap-1">
-          {/* 解析按钮 */}
-          <button
-            onClick={handleAnalyze}
-            disabled={analyzing}
-            className="electron-no-drag w-4 h-4 flex items-center justify-center text-stone-400 hover:text-amber-400 disabled:opacity-50"
-            title="解析语法词汇"
-          >
-            <BookOpen size={10} />
-          </button>
+          {/* 解析按钮 - 只在没有分析结果时显示 */}
+          {!analysisText && (
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="electron-no-drag w-4 h-4 flex items-center justify-center text-stone-400 hover:text-amber-400 disabled:opacity-50"
+              title="解析语法词汇"
+            >
+              <BookOpen size={10} />
+            </button>
+          )}
+          {/* 展开/收起分析结果按钮 - 有分析结果时显示 */}
+          {analysisText && (
+            <button
+              onClick={() => setShowAnalysis(!showAnalysis)}
+              className="electron-no-drag w-4 h-4 flex items-center justify-center text-stone-400 hover:text-amber-400"
+              title={showAnalysis ? '收起分析' : '展开分析'}
+            >
+              {showAnalysis ? <EyeOff size={10} /> : <Eye size={10} />}
+            </button>
+          )}
           {/* 显示原文按钮 */}
           {ocrText && (
             <button
               onClick={() => setShowOcr(!showOcr)}
               className="electron-no-drag w-4 h-4 flex items-center justify-center text-stone-400 hover:text-white"
-              title={showOcr ? '收回原文' : '显示原文'}
+              title={showOcr ? '收起原文' : '展开原文'}
             >
               {showOcr ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
             </button>
