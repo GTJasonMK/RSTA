@@ -114,6 +114,22 @@ class HttpOcrEngine:
 
 class PaddleOcrEngine:
     def __init__(self, config, fallback_lang):
+        # 设置模型下载目录到项目的 models 目录（必须在导入 paddleocr 之前设置）
+        model_dir = config.get("model_dir", "models")
+        model_path = Path(model_dir)
+        if not model_path.is_absolute():
+            model_path = CONFIG_PATH.parent / model_path
+        paddleocr_home = model_path / "paddleocr"
+        paddlex_home = model_path / "paddlex"
+        paddleocr_home.mkdir(parents=True, exist_ok=True)
+        paddlex_home.mkdir(parents=True, exist_ok=True)
+
+        # 设置所有 PaddleOCR/PaddleX 相关的环境变量
+        os.environ["PADDLEOCR_HOME"] = str(paddleocr_home)
+        os.environ["PADDLE_HOME"] = str(model_path / "paddle")
+        os.environ["PADDLEX_HOME"] = str(paddlex_home)
+        os.environ["PADDLE_PDX_CACHE_HOME"] = str(paddlex_home)
+
         try:
             from paddleocr import PaddleOCR
         except Exception as exc:
@@ -137,32 +153,33 @@ class PaddleOcrEngine:
             self.debug_capture_dir = CONFIG_PATH.parent / self.debug_capture_dir
         self.max_side = int(paddle_cfg.get("max_side", 1800))
 
-        # 设置模型下载目录到项目的 models 目录
-        model_dir = config.get("model_dir", "models")
-        model_path = Path(model_dir)
-        if not model_path.is_absolute():
-            model_path = CONFIG_PATH.parent / model_path
-        paddleocr_home = model_path / "paddleocr"
-        paddleocr_home.mkdir(parents=True, exist_ok=True)
-        import os
-        os.environ["PADDLEOCR_HOME"] = str(paddleocr_home)
-
         # 检查是否允许自动下载
         auto_download = bool(paddle_cfg.get("auto_download", False))
 
-        # 检查模型是否存在
-        whl_dir = paddleocr_home / "whl"
-        has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
+        # 检查模型是否存在（检查 PaddleX 目录，因为 PaddleOCR v5 使用 PaddleX）
+        has_models = False
+        # 检查 PaddleX 模型目录
+        official_models_dir = paddlex_home / "official_models"
+        if official_models_dir.exists():
+            model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
+            for model_dir_check in model_dirs:
+                if list(model_dir_check.glob("*.pdiparams")) or list(model_dir_check.glob("*.pdparams")):
+                    has_models = True
+                    break
+        # 兼容旧版 PaddleOCR 检查
+        if not has_models:
+            whl_dir = paddleocr_home / "whl"
+            has_models = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
 
         if not has_models and not auto_download:
             raise RuntimeError(
                 f"\n{'='*60}\n"
                 f"OCR 模型未找到！\n"
                 f"{'='*60}\n\n"
-                f"模型目录: {paddleocr_home}\n\n"
+                f"模型目录: {paddlex_home}\n\n"
                 f"请选择以下方式之一：\n"
                 f"  1. 在 config.json 中设置 paddleocr.auto_download = true 允许自动下载\n"
-                f"  2. 手动下载模型到上述目录\n\n"
+                f"  2. 在设置页面中点击下载按钮下载模型\n\n"
                 f"PaddleOCR 模型下载地址：\n"
                 f"  https://github.com/PaddlePaddle/PaddleOCR/blob/main/doc/doc_ch/models_list.md\n"
                 f"{'='*60}\n"
@@ -171,7 +188,7 @@ class PaddleOcrEngine:
         if not has_models:
             print(f"\n{'='*60}")
             print("正在下载 OCR 模型（首次使用需要下载）...")
-            print(f"模型将保存到: {paddleocr_home}")
+            print(f"模型将保存到: {paddlex_home}")
             print(f"{'='*60}\n")
 
         signature = inspect.signature(PaddleOCR)

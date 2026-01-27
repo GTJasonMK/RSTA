@@ -23,12 +23,17 @@ os.environ["FLAGS_pir_subgraph_saving_dir"] = ""
 os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 # 注意：不要禁用 MKLDNN，否则 CPU 推理会非常慢
 
-# 设置 PaddleOCR 模型下载目录到项目的 models 目录
+# 设置 PaddleOCR/PaddleX 模型下载目录到项目的 models 目录
 from pathlib import Path as _Path
 _SCRIPT_DIR = _Path(__file__).resolve().parent.parent
-_PADDLEOCR_HOME = _SCRIPT_DIR / "models" / "paddleocr"
+_MODELS_DIR = _SCRIPT_DIR / "models"
+_PADDLEOCR_HOME = _MODELS_DIR / "paddleocr"
 _PADDLEOCR_HOME.mkdir(parents=True, exist_ok=True)
+# 设置所有可能的缓存路径环境变量
 os.environ["PADDLEOCR_HOME"] = str(_PADDLEOCR_HOME)
+os.environ["PADDLE_HOME"] = str(_MODELS_DIR / "paddle")
+os.environ["PADDLEX_HOME"] = str(_MODELS_DIR / "paddlex")
+os.environ["PADDLE_PDX_CACHE_HOME"] = str(_MODELS_DIR / "paddlex")
 
 import base64
 import io
@@ -646,11 +651,33 @@ def list_models():
 def get_models_status():
     """获取模型下载状态"""
     # 检查 OCR 模型
-    paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
+    # PaddleOCR v5 使用 PaddleX，模型下载到 paddlex/official_models/ 目录
     ocr_downloaded = False
-    if paddleocr_home.exists():
-        whl_dir = paddleocr_home / "whl"
-        ocr_downloaded = whl_dir.exists() and any(whl_dir.iterdir()) if whl_dir.exists() else False
+    ocr_path = None
+
+    # 检查 PaddleX 模型目录 (PaddleOCR v5 使用)
+    paddlex_home = Path(os.environ.get("PADDLE_PDX_CACHE_HOME", os.environ.get("PADDLEX_HOME", "")))
+    if paddlex_home.exists():
+        official_models_dir = paddlex_home / "official_models"
+        if official_models_dir.exists():
+            # 检查是否有任何模型目录（如 PP-OCRv5_mobile_det）
+            model_dirs = [d for d in official_models_dir.iterdir() if d.is_dir() and "OCR" in d.name]
+            if model_dirs:
+                # 检查模型目录中是否有实际的模型文件
+                for model_dir in model_dirs:
+                    if list(model_dir.glob("*.pdiparams")) or list(model_dir.glob("*.pdparams")):
+                        ocr_downloaded = True
+                        ocr_path = str(official_models_dir)
+                        break
+
+    # 检查旧版 PaddleOCR 模型目录（兼容性）
+    if not ocr_downloaded:
+        paddleocr_home = Path(os.environ.get("PADDLEOCR_HOME", ""))
+        if paddleocr_home.exists():
+            whl_dir = paddleocr_home / "whl"
+            if whl_dir.exists() and any(whl_dir.iterdir()):
+                ocr_downloaded = True
+                ocr_path = str(paddleocr_home)
 
     # 检查翻译模型
     translate_downloaded = False
@@ -665,7 +692,7 @@ def get_models_status():
     return {
         "ocr": {
             "downloaded": ocr_downloaded,
-            "path": str(paddleocr_home) if paddleocr_home.exists() else None,
+            "path": ocr_path,
         },
         "translate": {
             "downloaded": translate_downloaded,
@@ -680,20 +707,12 @@ class DownloadModelRequest(BaseModel):
 
 @app.post("/models/download")
 def download_model(req: DownloadModelRequest):
-    """下载模型"""
+    """下载模型（非流式）"""
     if req.model_type == "ocr":
-        # 下载 OCR 模型 - 通过加载 PaddleOCR 触发自动下载
         try:
             from paddleocr import PaddleOCR
-
             logger.info("开始下载 OCR 模型...")
-
-            # 创建 PaddleOCR 实例会自动下载模型
-            kwargs = {
-                "lang": "en",
-                "device": "cpu",
-            }
-            # 安全创建，移除不支持的参数
+            kwargs = {"lang": "en", "device": "cpu"}
             pending = dict(kwargs)
             while True:
                 try:
@@ -708,7 +727,6 @@ def download_model(req: DownloadModelRequest):
                         pending.pop(name, None)
                         continue
                     raise
-
             logger.info("OCR 模型下载完成")
             return {"status": "ok", "message": "OCR 模型下载完成"}
         except ImportError:
@@ -718,41 +736,30 @@ def download_model(req: DownloadModelRequest):
             raise HTTPException(status_code=500, detail=f"OCR 模型下载失败: {e}")
 
     elif req.model_type == "translate":
-        # 下载翻译模型
         try:
             from huggingface_hub import hf_hub_download, list_repo_files
-
             repo_id = "tencent/HY-MT1.5-1.8B-GGUF"
             config = STATE._load_config()
             quant = config.get("local_service", {}).get("quant", "Q6_K")
             model_dir = _SCRIPT_DIR / "models"
             model_dir.mkdir(parents=True, exist_ok=True)
-
             logger.info(f"开始下载翻译模型 (量化级别: {quant})...")
-
-            # 获取文件列表并选择匹配的文件
             files = [f for f in list_repo_files(repo_id) if f.lower().endswith(".gguf")]
             if not files:
                 raise RuntimeError("模型仓库未找到 GGUF 文件")
-
             quant_key = quant.lower()
             matched = [f for f in files if quant_key in f.lower()]
             if not matched:
                 raise RuntimeError(f"未找到匹配量化档位 {quant} 的 GGUF 文件")
-
             matched.sort(key=len)
             filename = matched[0]
-
             logger.info(f"下载文件: {filename}")
-
-            # 下载模型
             hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
                 local_dir=model_dir,
                 local_dir_use_symlinks=False,
             )
-
             logger.info("翻译模型下载完成")
             return {"status": "ok", "message": f"翻译模型下载完成: {filename}"}
         except ImportError:
@@ -762,6 +769,143 @@ def download_model(req: DownloadModelRequest):
             raise HTTPException(status_code=500, detail=f"翻译模型下载失败: {e}")
     else:
         raise HTTPException(status_code=400, detail=f"未知的模型类型: {req.model_type}")
+
+
+@app.get("/models/download_stream")
+def download_model_stream(model_type: str):
+    """流式下载模型（带进度）"""
+
+    def generate():
+        def send_progress(percent: int, message: str, status: str = "downloading"):
+            payload = json.dumps({"percent": percent, "message": message, "status": status})
+            return f"data: {payload}\n\n"
+
+        if model_type == "ocr":
+            try:
+                yield send_progress(0, "正在初始化 OCR 模块...", "downloading")
+
+                from paddleocr import PaddleOCR
+
+                yield send_progress(10, "正在检查模型文件...", "downloading")
+
+                kwargs = {"lang": "en", "device": "cpu"}
+                pending = dict(kwargs)
+
+                yield send_progress(20, "正在下载 OCR 模型（此过程可能需要几分钟）...", "downloading")
+
+                while True:
+                    try:
+                        _ = PaddleOCR(**pending)
+                        break
+                    except Exception as exc:
+                        message = str(exc)
+                        if "Unknown argument" not in message:
+                            raise
+                        name = message.split("Unknown argument:", 1)[-1].strip().split()[0]
+                        if name in pending:
+                            pending.pop(name, None)
+                            continue
+                        raise
+
+                yield send_progress(100, "OCR 模型下载完成", "done")
+                logger.info("OCR 模型下载完成")
+
+            except ImportError as e:
+                yield send_progress(0, f"PaddleOCR 未安装: {e}", "error")
+            except Exception as e:
+                logger.error(f"OCR 模型下载失败: {e}")
+                yield send_progress(0, f"下载失败: {e}", "error")
+
+        elif model_type == "translate":
+            try:
+                yield send_progress(0, "正在初始化...", "downloading")
+
+                from huggingface_hub import hf_hub_download, list_repo_files
+                from huggingface_hub.utils import tqdm as hf_tqdm
+
+                repo_id = "tencent/HY-MT1.5-1.8B-GGUF"
+                config = STATE._load_config()
+                quant = config.get("local_service", {}).get("quant", "Q6_K")
+                model_dir = _SCRIPT_DIR / "models"
+                model_dir.mkdir(parents=True, exist_ok=True)
+
+                yield send_progress(5, f"正在获取模型列表 (量化级别: {quant})...", "downloading")
+
+                files = [f for f in list_repo_files(repo_id) if f.lower().endswith(".gguf")]
+                if not files:
+                    yield send_progress(0, "模型仓库未找到 GGUF 文件", "error")
+                    return
+
+                quant_key = quant.lower()
+                matched = [f for f in files if quant_key in f.lower()]
+                if not matched:
+                    yield send_progress(0, f"未找到匹配量化档位 {quant} 的 GGUF 文件", "error")
+                    return
+
+                matched.sort(key=len)
+                filename = matched[0]
+
+                yield send_progress(10, f"正在下载: {filename}", "downloading")
+
+                # 检查文件是否已存在
+                local_path = model_dir / filename
+                if local_path.exists():
+                    yield send_progress(100, f"模型已存在: {filename}", "done")
+                    return
+
+                # 使用回调函数跟踪下载进度
+                # huggingface_hub 不直接支持进度回调，但我们可以定期检查文件大小
+                import threading
+                import time
+
+                download_complete = threading.Event()
+                download_error = [None]
+                final_path = [None]
+
+                def download_thread():
+                    try:
+                        result = hf_hub_download(
+                            repo_id=repo_id,
+                            filename=filename,
+                            local_dir=model_dir,
+                            local_dir_use_symlinks=False,
+                        )
+                        final_path[0] = result
+                    except Exception as e:
+                        download_error[0] = e
+                    finally:
+                        download_complete.set()
+
+                thread = threading.Thread(target=download_thread)
+                thread.start()
+
+                # 在下载过程中发送进度更新
+                last_percent = 10
+                while not download_complete.is_set():
+                    time.sleep(2)
+                    # 检查下载目录中的临时文件
+                    # huggingface_hub 下载到 .cache 然后移动
+                    if last_percent < 90:
+                        last_percent = min(last_percent + 5, 90)
+                        yield send_progress(last_percent, f"正在下载: {filename} ({last_percent}%)", "downloading")
+
+                thread.join()
+
+                if download_error[0]:
+                    raise download_error[0]
+
+                yield send_progress(100, f"翻译模型下载完成: {filename}", "done")
+                logger.info(f"翻译模型下载完成: {filename}")
+
+            except ImportError as e:
+                yield send_progress(0, f"huggingface_hub 未安装: {e}", "error")
+            except Exception as e:
+                logger.error(f"翻译模型下载失败: {e}")
+                yield send_progress(0, f"下载失败: {e}", "error")
+        else:
+            yield send_progress(0, f"未知的模型类型: {model_type}", "error")
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 class PreloadRequest(BaseModel):

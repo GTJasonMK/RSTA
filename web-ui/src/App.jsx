@@ -146,6 +146,7 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
   const [activeTab, setActiveTab] = useState('general');
   const [modelStatus, setModelStatus] = useState({ ocr: { downloaded: false }, translate: { downloaded: false } });
   const [downloadingModel, setDownloadingModel] = useState(null); // 'ocr' | 'translate' | null
+  const [downloadProgress, setDownloadProgress] = useState({ percent: 0, message: '' });
 
   // 获取模型状态
   useEffect(() => {
@@ -160,19 +161,52 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
     fetchModelStatus();
   }, [serverPort]);
 
-  // 下载模型
+  // 下载模型（使用流式接口显示进度）
   const downloadModel = async (modelType) => {
     setDownloadingModel(modelType);
+    setDownloadProgress({ percent: 0, message: '正在连接...' });
+
     try {
-      await axios.post(`http://127.0.0.1:${serverPort}/models/download`, { model_type: modelType }, { timeout: 600000 }); // 10分钟超时
-      // 刷新状态
-      const res = await axios.get(`http://127.0.0.1:${serverPort}/models/status`);
-      setModelStatus(res.data);
+      // 使用 EventSource 连接到流式下载接口
+      const eventSource = new EventSource(`http://127.0.0.1:${serverPort}/models/download_stream?model_type=${modelType}`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setDownloadProgress({ percent: data.percent, message: data.message });
+
+          if (data.status === 'done') {
+            eventSource.close();
+            setDownloadingModel(null);
+            setDownloadProgress({ percent: 100, message: '' });
+            // 刷新模型状态
+            axios.get(`http://127.0.0.1:${serverPort}/models/status`).then(res => {
+              setModelStatus(res.data);
+            }).catch(() => {});
+          } else if (data.status === 'error') {
+            eventSource.close();
+            setDownloadingModel(null);
+            setDownloadProgress({ percent: 0, message: '' });
+            alert(`下载失败: ${data.message}`);
+          }
+        } catch (e) {
+          console.warn('Failed to parse download progress:', e);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error('EventSource error:', err);
+        eventSource.close();
+        setDownloadingModel(null);
+        setDownloadProgress({ percent: 0, message: '' });
+        alert('下载连接中断，请重试');
+      };
+
     } catch (err) {
       console.error(`Failed to download ${modelType} model:`, err.message);
-      alert(`下载失败: ${err.response?.data?.detail || err.message}`);
-    } finally {
       setDownloadingModel(null);
+      setDownloadProgress({ percent: 0, message: '' });
+      alert(`下载失败: ${err.message}`);
     }
   };
 
@@ -374,35 +408,56 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
                     <Input value={config.model_dir || 'models'} onChange={(v) => updateConfig('model_dir', v)} className="w-64" />
                   </SettingRow>
                   <SettingRow label="OCR 模型" description={modelStatus.ocr?.downloaded ? '已下载' : '未下载'}>
-                    <button
-                      onClick={() => downloadModel('ocr')}
-                      disabled={downloadingModel !== null || modelStatus.ocr?.downloaded}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                        modelStatus.ocr?.downloaded
-                          ? 'bg-green-100 text-green-700 cursor-default'
-                          : downloadingModel === 'ocr'
-                          ? 'bg-stone-200 text-stone-500 cursor-wait'
-                          : 'bg-amber-500 hover:bg-amber-600 text-white'
-                      }`}
-                    >
-                      {modelStatus.ocr?.downloaded ? 'OK' : downloadingModel === 'ocr' ? '下载中...' : '下载'}
-                    </button>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        onClick={() => downloadModel('ocr')}
+                        disabled={downloadingModel !== null || modelStatus.ocr?.downloaded}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                          modelStatus.ocr?.downloaded
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : downloadingModel === 'ocr'
+                            ? 'bg-stone-200 text-stone-500 cursor-wait'
+                            : 'bg-amber-500 hover:bg-amber-600 text-white'
+                        }`}
+                      >
+                        {modelStatus.ocr?.downloaded ? 'OK' : downloadingModel === 'ocr' ? `${downloadProgress.percent}%` : '下载'}
+                      </button>
+                      {downloadingModel === 'ocr' && downloadProgress.message && (
+                        <span className="text-xs text-stone-500 max-w-48 text-right truncate">{downloadProgress.message}</span>
+                      )}
+                    </div>
                   </SettingRow>
                   <SettingRow label="翻译模型" description={modelStatus.translate?.downloaded ? '已下载' : '未下载'}>
-                    <button
-                      onClick={() => downloadModel('translate')}
-                      disabled={downloadingModel !== null || modelStatus.translate?.downloaded}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                        modelStatus.translate?.downloaded
-                          ? 'bg-green-100 text-green-700 cursor-default'
-                          : downloadingModel === 'translate'
-                          ? 'bg-stone-200 text-stone-500 cursor-wait'
-                          : 'bg-amber-500 hover:bg-amber-600 text-white'
-                      }`}
-                    >
-                      {modelStatus.translate?.downloaded ? 'OK' : downloadingModel === 'translate' ? '下载中...' : '下载'}
-                    </button>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        onClick={() => downloadModel('translate')}
+                        disabled={downloadingModel !== null || modelStatus.translate?.downloaded}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                          modelStatus.translate?.downloaded
+                            ? 'bg-green-100 text-green-700 cursor-default'
+                            : downloadingModel === 'translate'
+                            ? 'bg-stone-200 text-stone-500 cursor-wait'
+                            : 'bg-amber-500 hover:bg-amber-600 text-white'
+                        }`}
+                      >
+                        {modelStatus.translate?.downloaded ? 'OK' : downloadingModel === 'translate' ? `${downloadProgress.percent}%` : '下载'}
+                      </button>
+                      {downloadingModel === 'translate' && downloadProgress.message && (
+                        <span className="text-xs text-stone-500 max-w-48 text-right truncate">{downloadProgress.message}</span>
+                      )}
+                    </div>
                   </SettingRow>
+                  {/* 下载进度条 */}
+                  {downloadingModel && (
+                    <div className="mt-2">
+                      <div className="w-full bg-stone-200 rounded-full h-2">
+                        <div
+                          className="bg-amber-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${downloadProgress.percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </SettingGroup>
               </>
             )}
@@ -442,7 +497,7 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
 };
 
 // ==================== Dashboard Component ====================
-const Dashboard = ({ onStartCapture, config, onConfigChange, status, onOpenSettings, onOpenLogs, isModelLoading, loadingMessage }) => {
+const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus, onOpenSettings, onOpenLogs, isModelLoading, loadingMessage }) => {
   const handleSwap = () => {
     onConfigChange({
       ...config,
@@ -451,7 +506,9 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, onOpenSetti
     });
   };
 
-  const canCapture = status === 'ready' && !isModelLoading;
+  const ocrReady = modelStatus?.ocr?.downloaded;
+  const translateReady = modelStatus?.translate?.downloaded;
+  const canCapture = status === 'ready' && ocrReady && translateReady && !isModelLoading;
 
   return (
     <div className="flex flex-col h-screen bg-[#FAFAF9] text-stone-900 overflow-hidden">
@@ -546,7 +603,15 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, onOpenSetti
             <span>Backend: {status === 'ready' ? 'Running' : 'Connecting...'}</span>
           </div>
           <div className="h-3 w-px bg-stone-200" />
-          <span>OCR: Ready</span>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${ocrReady ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span>OCR: {ocrReady ? 'Ready' : 'Not Downloaded'}</span>
+          </div>
+          <div className="h-3 w-px bg-stone-200" />
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${translateReady ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span>Translate: {translateReady ? 'Ready' : 'Not Downloaded'}</span>
+          </div>
         </div>
         <button onClick={onOpenLogs} className="flex items-center gap-1.5 px-2 py-1 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600">
           <Terminal size={14} />
@@ -831,6 +896,7 @@ const App = () => {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [loadedModels, setLoadedModels] = useState(new Set());
+  const [modelStatus, setModelStatus] = useState({ ocr: { downloaded: false }, translate: { downloaded: false } });
   const [config, setConfig] = useState({
     source_lang: 'en',
     target_lang: 'zh',
@@ -874,6 +940,13 @@ const App = () => {
         // 更新已加载的模型列表
         if (res.data.ocr_loaded) {
           setLoadedModels(new Set(res.data.ocr_loaded));
+        }
+        // 获取模型下载状态
+        try {
+          const statusRes = await axios.get(`${baseUrl}/models/status`);
+          setModelStatus(statusRes.data);
+        } catch (e) {
+          // 忽略模型状态获取失败
         }
       } catch (e) {
         setStatus('error');
@@ -1124,6 +1197,7 @@ const App = () => {
       config={config}
       onConfigChange={handleConfigChange}
       status={status}
+      modelStatus={modelStatus}
       onOpenSettings={() => setShowSettings(true)}
       onOpenLogs={() => setShowLogs(true)}
       isModelLoading={isModelLoading}
