@@ -527,7 +527,7 @@ const SettingsPage = ({ config, onConfigChange, onBack, onSave, onReset, serverP
 };
 
 // ==================== Dashboard Component ====================
-const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus, onOpenSettings, onOpenLogs, isModelLoading, loadingMessage }) => {
+const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus, loadingStatus, onOpenSettings, onOpenLogs, isModelLoading, loadingMessage }) => {
   const handleSwap = () => {
     onConfigChange({
       ...config,
@@ -538,11 +538,58 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
 
   // 根据配置的模型类型检查对应的 OCR 模型是否下载
   const ocrModelType = config.paddleocr?.model_type || 'mobile';
-  const ocrReady = ocrModelType === 'mobile'
+  const ocrDownloaded = ocrModelType === 'mobile'
     ? modelStatus?.ocr?.mobile_downloaded
     : modelStatus?.ocr?.server_downloaded;
-  const translateReady = modelStatus?.translate?.downloaded;
-  const canCapture = status === 'ready' && ocrReady && translateReady && !isModelLoading;
+  const translateDownloaded = modelStatus?.translate?.downloaded;
+
+  // 模型加载状态（已加载到内存）
+  const ocrLoading = loadingStatus?.ocr?.loading;
+  const ocrLoaded = loadingStatus?.ocr?.ready;
+  const translateLoading = loadingStatus?.translate?.loading;
+  const translateLoaded = loadingStatus?.translate?.ready;
+
+  // 判断模型是否真正就绪（已下载且已加载）
+  const ocrReady = ocrDownloaded && ocrLoaded;
+  const translateReady = translateDownloaded && translateLoaded;
+
+  // 是否正在后台加载模型
+  const isBackgroundLoading = ocrLoading || translateLoading;
+
+  // 只有当模型下载且加载完成时才允许截图
+  const canCapture = status === 'ready' && ocrReady && translateReady && !isModelLoading && !isBackgroundLoading;
+
+  // 获取 OCR 状态文本
+  const getOcrStatusText = () => {
+    if (!ocrDownloaded) return 'Not Downloaded';
+    if (ocrLoading) return 'Loading...';
+    if (ocrLoaded) return 'Ready';
+    return 'Not Loaded';
+  };
+
+  // 获取翻译状态文本
+  const getTranslateStatusText = () => {
+    if (!translateDownloaded) return 'Not Downloaded';
+    if (translateLoading) return 'Loading...';
+    if (translateLoaded) return 'Ready';
+    return 'Not Loaded';
+  };
+
+  // 获取 OCR 状态颜色
+  const getOcrStatusColor = () => {
+    if (!ocrDownloaded) return 'bg-red-500';
+    if (ocrLoading) return 'bg-amber-500 animate-pulse';
+    if (ocrLoaded) return 'bg-green-500';
+    return 'bg-amber-500';
+  };
+
+  // 获取翻译状态颜色
+  const getTranslateStatusColor = () => {
+    if (!translateDownloaded) return 'bg-red-500';
+    if (translateLoading) return 'bg-amber-500 animate-pulse';
+    if (translateLoaded) return 'bg-green-500';
+    return 'bg-amber-500';
+  };
 
   return (
     <div className="flex flex-col h-screen bg-[#FAFAF9] text-stone-900 overflow-hidden">
@@ -596,7 +643,7 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
             }`}
           >
             <div className={`absolute inset-2 rounded-full border-2 ${canCapture ? 'border-white/20 group-hover:border-white/40' : 'border-white/10'}`} />
-            {isModelLoading ? (
+            {(isModelLoading || isBackgroundLoading) ? (
               <>
                 <Loader2 size={40} className="mb-1 animate-spin" />
                 <span className="font-bold text-xs tracking-wide">LOADING</span>
@@ -608,8 +655,14 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
               </>
             )}
           </button>
-          {isModelLoading ? (
-            <div className="text-amber-600 text-xs font-medium">{loadingMessage}</div>
+          {(isModelLoading || isBackgroundLoading) ? (
+            <div className="text-amber-600 text-xs font-medium">
+              {isModelLoading ? loadingMessage : (
+                ocrLoading && translateLoading ? 'Loading OCR & Translate...' :
+                ocrLoading ? 'Loading OCR model...' :
+                'Loading translate model...'
+              )}
+            </div>
           ) : (
             <div className="text-stone-400 text-xs font-mono">Ctrl+Alt+Q</div>
           )}
@@ -638,13 +691,13 @@ const Dashboard = ({ onStartCapture, config, onConfigChange, status, modelStatus
           </div>
           <div className="h-3 w-px bg-stone-200" />
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${ocrReady ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span>OCR ({ocrModelType}): {ocrReady ? 'Ready' : 'Not Downloaded'}</span>
+            <div className={`w-2 h-2 rounded-full ${getOcrStatusColor()}`} />
+            <span>OCR ({ocrModelType}): {getOcrStatusText()}</span>
           </div>
           <div className="h-3 w-px bg-stone-200" />
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${translateReady ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span>Translate: {translateReady ? 'Ready' : 'Not Downloaded'}</span>
+            <div className={`w-2 h-2 rounded-full ${getTranslateStatusColor()}`} />
+            <span>Translate: {getTranslateStatusText()}</span>
           </div>
         </div>
         <button onClick={onOpenLogs} className="flex items-center gap-1.5 px-2 py-1 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600">
@@ -934,6 +987,12 @@ const App = () => {
     ocr: { downloaded: false, mobile_downloaded: false, server_downloaded: false },
     translate: { downloaded: false }
   });
+  // 模型加载状态（区别于下载状态）
+  const [loadingStatus, setLoadingStatus] = useState({
+    ocr: { loading: false, ready: false, loaded_models: [] },
+    translate: { loading: false, ready: false, model_file: null },
+    error: null
+  });
   const [config, setConfig] = useState({
     source_lang: 'en',
     target_lang: 'zh',
@@ -985,12 +1044,20 @@ const App = () => {
         } catch (e) {
           // 忽略模型状态获取失败
         }
+        // 获取模型加载状态（区别于下载状态）
+        try {
+          const loadingRes = await axios.get(`${baseUrl}/loading_status`);
+          setLoadingStatus(loadingRes.data);
+        } catch (e) {
+          // 忽略加载状态获取失败
+        }
       } catch (e) {
         setStatus('error');
       }
     };
     checkHealth();
-    const interval = setInterval(checkHealth, 5000);
+    // 模型加载时更频繁检查（1秒），加载完成后降低频率（5秒）
+    const interval = setInterval(checkHealth, 1000);
     return () => clearInterval(interval);
   }, [baseUrl, isOverlay]);
 
@@ -1235,6 +1302,7 @@ const App = () => {
       onConfigChange={handleConfigChange}
       status={status}
       modelStatus={modelStatus}
+      loadingStatus={loadingStatus}
       onOpenSettings={() => setShowSettings(true)}
       onOpenLogs={() => setShowLogs(true)}
       isModelLoading={isModelLoading}
