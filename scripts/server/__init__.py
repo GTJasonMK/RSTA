@@ -12,12 +12,16 @@ from .schemas import (
     OcrRequest, OcrResponse,
     TranslateRequest, TranslateResponse,
     ModelsResponse, DownloadModelRequest,
-    PreloadRequest, AnalyzeRequest
+    PreloadRequest, AnalyzeRequest,
+    NotebookRecord, NotebookSaveRequest, NotebookUpdateRequest,
+    NotebookDatesResponse, NotebookRecordsResponse,
+    QAPair, QASaveRequest, QAAskRequest, QAHistoryResponse
 )
 from .state import STATE, SCRIPT_DIR
 from .ocr_service import do_ocr, extract_ocr_text
 from .translate_service import build_prompt, load_translate_model
-from .llm_client import LLMClient, ANALYZE_PROMPT_TEMPLATE
+from .llm_client import LLMClient, ANALYZE_PROMPT_TEMPLATE, QA_SYSTEM_PROMPT, QA_USER_PROMPT, format_qa_history
+from . import notebook_service
 
 __all__ = [
     # 日志
@@ -30,10 +34,14 @@ __all__ = [
     'TranslateRequest', 'TranslateResponse',
     'ModelsResponse', 'DownloadModelRequest',
     'PreloadRequest', 'AnalyzeRequest',
+    'NotebookRecord', 'NotebookSaveRequest', 'NotebookUpdateRequest',
+    'NotebookDatesResponse', 'NotebookRecordsResponse',
+    'QAPair', 'QASaveRequest', 'QAAskRequest', 'QAHistoryResponse',
     # 状态
     'STATE', 'SCRIPT_DIR',
     # 服务
     'do_ocr', 'extract_ocr_text',
     'build_prompt', 'load_translate_model',
-    'LLMClient', 'ANALYZE_PROMPT_TEMPLATE',
+    'LLMClient', 'ANALYZE_PROMPT_TEMPLATE', 'QA_SYSTEM_PROMPT', 'QA_USER_PROMPT', 'format_qa_history',
+    'notebook_service',
 ]

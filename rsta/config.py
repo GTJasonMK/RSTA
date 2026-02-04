@@ -1,8 +1,33 @@
 import json
+import sys
 from pathlib import Path
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+def get_config_path() -> Path:
+    """获取配置文件路径，支持打包和开发两种环境"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后：从工作目录或可执行文件目录查找
+        # 优先使用工作目录（Electron 会设置工作目录为 resources）
+        cwd_config = Path.cwd() / "config.json"
+        if cwd_config.exists():
+            return cwd_config
+        # 其次使用可执行文件所在目录
+        exe_dir = Path(sys.executable).parent
+        exe_config = exe_dir / "config.json"
+        if exe_config.exists():
+            return exe_config
+        # 再查找上级目录
+        parent_config = exe_dir.parent / "config.json"
+        if parent_config.exists():
+            return parent_config
+        # 默认返回工作目录
+        return cwd_config
+    else:
+        # 开发环境：rsta/ -> project_root
+        return Path(__file__).resolve().parents[1] / "config.json"
+
+
+CONFIG_PATH = get_config_path()
 
 DEFAULT_CONFIG = {
     "hotkey": "Ctrl+Alt+Q",

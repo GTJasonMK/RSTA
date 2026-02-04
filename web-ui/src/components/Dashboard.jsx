@@ -1,5 +1,5 @@
 import React from 'react';
-import { Camera, X, Minus, ArrowRightLeft, Settings, Loader2, Terminal } from 'lucide-react';
+import { Camera, X, Minus, ArrowRightLeft, Settings, Loader2, Terminal, BookOpen } from 'lucide-react';
 import { Select } from './SettingControls';
 import { LANGUAGES, TRANSLATORS, OCR_MODELS } from '../constants';
 
@@ -15,6 +15,7 @@ const Dashboard = ({
   loadingStatus,
   onOpenSettings,
   onOpenLogs,
+  onOpenNotebook,
   isModelLoading,
   loadingMessage
 }) => {
@@ -89,6 +90,9 @@ const Dashboard = ({
           Screen Translate
         </span>
         <div className="flex gap-1 no-drag">
+          <button onClick={onOpenNotebook} className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600" title="Notebook">
+            <BookOpen size={16} />
+          </button>
           <button onClick={onOpenSettings} className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600">
             <Settings size={16} />
           </button>

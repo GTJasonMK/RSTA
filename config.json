@@ -2,6 +2,7 @@
   "hotkey": "Ctrl+Alt+Q",
   "swap_hotkey": "Ctrl+Alt+A",
   "close_overlay_hotkey": "Escape",
+  "qa_hotkey": "Ctrl+Alt+W",
   "ocr_lang": "eng",
   "ocr_engine": "paddleocr",
   "source_lang": "en",

@@ -57,3 +57,73 @@ class AnalyzeRequest(BaseModel):
     text: str  # 要解析的文本
     source_lang: str = "en"  # 源语言
     target_lang: str = "zh"  # 目标语言
+
+
+# ============== 笔记本相关模型 ==============
+
+class NotebookRecord(BaseModel):
+    """笔记本记录"""
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+    date_key: Optional[str] = None
+    ocr_text: str
+    translated_text: Optional[str] = None
+    analysis_text: Optional[str] = None
+    source_lang: str = "en"
+    target_lang: str = "zh"
+
+
+class NotebookSaveRequest(BaseModel):
+    """保存笔记本记录请求"""
+    ocr_text: str
+    translated_text: Optional[str] = None
+    analysis_text: Optional[str] = None
+    source_lang: str = "en"
+    target_lang: str = "zh"
+
+
+class NotebookUpdateRequest(BaseModel):
+    """更新笔记本记录请求"""
+    analysis_text: Optional[str] = None
+
+
+class NotebookDatesResponse(BaseModel):
+    """日期列表响应"""
+    dates: List[str]
+    counts: dict
+
+
+class NotebookRecordsResponse(BaseModel):
+    """记录列表响应"""
+    records: List[NotebookRecord]
+
+
+# ============== QA 模式相关模型 ==============
+
+class QAPair(BaseModel):
+    """单轮QA对话"""
+    q: str  # 问题
+    a: str  # 回答
+
+
+class QASaveRequest(BaseModel):
+    """保存QA记录请求（OCR完成后）"""
+    ocr_text: str
+    source_lang: str = "en"
+    target_lang: str = "zh"
+
+
+class QAAskRequest(BaseModel):
+    """提问请求"""
+    record_id: int
+    question: str
+    ocr_text: str  # 用于构建上下文
+    source_lang: str = "en"
+    target_lang: str = "zh"
+
+
+class QAHistoryResponse(BaseModel):
+    """QA历史响应"""
+    record_id: int
+    qa_list: List[QAPair]
+

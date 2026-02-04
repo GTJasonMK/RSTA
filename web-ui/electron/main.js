@@ -11,32 +11,40 @@ let currentOverlayId = null; // 当前活动的 overlay ID
 let overlayIdCounter = 0;
 let tray;
 let pythonServerProcess;
+let currentCaptureMode = 'translate'; // 'translate' 或 'qa'
+let preCapuredImage = null; // 预先截取的屏幕图片
+let preCapturedScaleFactor = 1; // 预先截取时的缩放因子
 
-// 检测虚拟环境中的 Python
-function getBackendPython() {
-  const projectRoot = path.join(__dirname, '../..');
-  const venvPython = process.platform === 'win32'
-    ? path.join(projectRoot, '.venv-hymt-gguf', 'Scripts', 'python.exe')
-    : path.join(projectRoot, '.venv-hymt-gguf', 'bin', 'python');
+// 判断是否为打包后的环境
+const isPackaged = app.isPackaged;
 
-  if (fs.existsSync(venvPython)) {
-    console.log('Using venv Python:', venvPython);
-    return venvPython;
+// 获取资源目录路径
+function getResourcePath(relativePath) {
+  if (isPackaged) {
+    // 打包后：resources 目录
+    return path.join(process.resourcesPath, relativePath);
+  } else {
+    // 开发环境：项目根目录
+    return path.join(__dirname, '../..', relativePath);
   }
+}
 
-  console.log('Using system Python');
-  return 'python';
+// 检测后端可执行文件或 Python 环境
+function getBackendExecutable() {
+  // 仅前端打包模式：不启动后端，需要用户手动运行
+  // 用户需要先运行: python scripts/serve_unified.py
+  console.log('Frontend-only mode: backend must be started manually');
+  console.log('Run: python scripts/serve_unified.py');
+  return null;
 }
 
 const CONFIG = {
-  serverPort: 8092,
-  pythonScript: path.join(__dirname, '../../scripts/serve_unified.py'),
-  pythonExecutable: getBackendPython()
+  serverPort: 8092
 };
 
 // 读取项目配置文件
 function loadProjectConfig() {
-  const configPath = path.join(__dirname, '../../config.json');
+  const configPath = getResourcePath('config.json');
   try {
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf8');
@@ -49,7 +57,8 @@ function loadProjectConfig() {
   return {
     hotkey: 'Ctrl+Alt+Q',
     swap_hotkey: 'Ctrl+Alt+A',
-    close_overlay_hotkey: 'Escape'
+    close_overlay_hotkey: 'Escape',
+    qa_hotkey: 'Ctrl+Alt+W'
   };
 }
 
@@ -132,14 +141,14 @@ function createSnippingWindow() {
   snippingWindow.loadURL(url);
 }
 
-function createOverlayWindow(bounds) {
+function createOverlayWindow(bounds, captureMode = 'translate') {
   // 计算浮窗位置：在选框右侧或下方显示
   const display = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = display.workAreaSize;
 
-  // 初始尺寸要足够大，让内容能正确渲染和测量
-  const initialWidth = 300;
-  const initialHeight = 150;
+  // QA模式需要更大的初始尺寸（包含输入框）
+  const initialWidth = captureMode === 'qa' ? 350 : 300;
+  const initialHeight = captureMode === 'qa' ? 250 : 150;
 
   const padding = 8;
   let x = bounds.x + bounds.width + padding;
@@ -184,9 +193,10 @@ function createOverlayWindow(bounds) {
   // 存储窗口引用
   overlayWindows.set(overlayId, overlayWindow);
 
+  // 统一使用 overlay 模式，通过 captureMode 参数区分
   const url = process.env.NODE_ENV === 'development'
-    ? `http://localhost:5173?mode=overlay&id=${overlayId}`
-    : `file://${path.join(__dirname, '../dist/index.html')}?mode=overlay&id=${overlayId}`;
+    ? `http://localhost:5173?mode=overlay&id=${overlayId}&captureMode=${captureMode}`
+    : `file://${path.join(__dirname, '../dist/index.html')}?mode=overlay&id=${overlayId}&captureMode=${captureMode}`;
 
   overlayWindow.loadURL(url);
 
@@ -255,17 +265,27 @@ async function startPythonServerIfNeeded() {
     return;
   }
 
-  console.log('Starting Python server...');
-  pythonServerProcess = spawn(CONFIG.pythonExecutable, [CONFIG.pythonScript], {
-    env: { ...process.env, PORT: CONFIG.serverPort.toString() }
+  const backend = getBackendExecutable();
+  if (!backend) {
+    console.error('Backend executable not found');
+    return;
+  }
+
+  console.log('Starting backend server...');
+  // 设置工作目录为资源目录（让后端能找到 models 和 config）
+  const cwd = isPackaged ? process.resourcesPath : path.join(__dirname, '../..');
+
+  pythonServerProcess = spawn(backend.executable, backend.args, {
+    env: { ...process.env, PORT: CONFIG.serverPort.toString() },
+    cwd: cwd
   });
 
   pythonServerProcess.stdout.on('data', (data) => {
-    console.log(`[Python]: ${data}`);
+    console.log(`[Backend]: ${data}`);
   });
 
   pythonServerProcess.stderr.on('data', (data) => {
-    console.error(`[Python Error]: ${data}`);
+    console.error(`[Backend Error]: ${data}`);
   });
 }
 
@@ -277,13 +297,75 @@ ipcMain.handle('get-config', () => {
     ui: projectConfig.ui || {},
     hotkey: projectConfig.hotkey,
     swap_hotkey: projectConfig.swap_hotkey,
-    close_overlay_hotkey: projectConfig.close_overlay_hotkey
+    close_overlay_hotkey: projectConfig.close_overlay_hotkey,
+    qa_hotkey: projectConfig.qa_hotkey
   };
 });
 
 // --- IPC Handlers ---
 
+// 记录主窗口在截图前是否可见
+let wasMainWindowVisible = false;
+
+// 预先截取屏幕的辅助函数
+async function captureScreenBeforeSnipping() {
+  // 先隐藏主窗口（如果可见）
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    wasMainWindowVisible = true;
+    mainWindow.hide();
+    // 等待窗口完全隐藏
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } else {
+    wasMainWindowVisible = false;
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const scaleFactor = primaryDisplay.scaleFactor || 1;
+
+  const thumbnailSize = {
+    width: Math.floor(primaryDisplay.size.width * scaleFactor),
+    height: Math.floor(primaryDisplay.size.height * scaleFactor)
+  };
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: thumbnailSize
+  });
+
+  if (sources.length > 0) {
+    preCapuredImage = sources[0].thumbnail.toDataURL();
+    preCapturedScaleFactor = scaleFactor;
+    console.log('[Capture] Pre-captured screen, scaleFactor:', scaleFactor);
+  }
+}
+
 ipcMain.handle('start-capture', async () => {
+  currentCaptureMode = 'translate';
+
+  // 先截取屏幕（在显示任何窗口之前）
+  await captureScreenBeforeSnipping();
+
+  if (!snippingWindow) createSnippingWindow();
+
+  // 确保窗口加载完成后再显示，最多等待 5 秒
+  if (snippingWindow.webContents.isLoading()) {
+    const loadPromise = new Promise(resolve => {
+      snippingWindow.webContents.once('did-finish-load', resolve);
+    });
+    const timeoutPromise = new Promise(resolve => setTimeout(resolve, 5000));
+    await Promise.race([loadPromise, timeoutPromise]);
+  }
+
+  snippingWindow.show();
+  snippingWindow.focus();
+});
+
+ipcMain.handle('start-qa-capture', async () => {
+  currentCaptureMode = 'qa';
+
+  // 先截取屏幕（在显示任何窗口之前）
+  await captureScreenBeforeSnipping();
+
   if (!snippingWindow) createSnippingWindow();
 
   // 确保窗口加载完成后再显示，最多等待 5 秒
@@ -303,6 +385,13 @@ ipcMain.handle('cancel-capture', () => {
   if (snippingWindow) {
     snippingWindow.hide();
   }
+  // 恢复主窗口可见性
+  if (wasMainWindowVisible && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+  }
+  currentCaptureMode = 'translate'; // 重置模式
+  preCapuredImage = null; // 清除预截图
+  wasMainWindowVisible = false;
 });
 
 ipcMain.handle('capture-complete', async (event, bounds) => {
@@ -311,33 +400,45 @@ ipcMain.handle('capture-complete', async (event, bounds) => {
     snippingWindow.hide();
   }
 
-  // 截取屏幕
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: primaryDisplay.size
-  });
-  const source = sources[0];
-
-  if (!source) {
-    console.error('No screen source found');
-    return { success: false, error: 'No screen source found' };
+  // 使用预先截取的图片
+  if (!preCapuredImage) {
+    console.error('No pre-captured image found');
+    // 恢复主窗口可见性
+    if (wasMainWindowVisible && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
+    wasMainWindowVisible = false;
+    currentCaptureMode = 'translate';
+    return { success: false, error: 'No pre-captured image' };
   }
 
+  console.log('[Capture] Using pre-captured image, scaleFactor:', preCapturedScaleFactor, 'bounds:', bounds);
+  console.log('[Capture] currentCaptureMode:', currentCaptureMode);
+
+  // 保存当前模式（在 reset 之前）
+  const capturedMode = currentCaptureMode;
+  console.log('[Capture] capturedMode:', capturedMode);
+
   const captureData = {
-    image: source.thumbnail.toDataURL(),
-    bounds: bounds
+    image: preCapuredImage,
+    bounds: bounds,
+    mode: capturedMode,
+    scaleFactor: preCapturedScaleFactor
   };
 
   // 创建并显示浮窗，返回 overlay ID
-  const overlayId = createOverlayWindow(bounds);
+  const overlayId = createOverlayWindow(bounds, capturedMode);
 
-  // 发送数据到主窗口进行处理，包含 overlayId
+  // 统一发送 capture-result 事件，通过 mode 区分处理方式
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('capture-result', { ...captureData, overlayId });
   }
 
-  return { success: true, overlayId };
+  // 重置状态
+  currentCaptureMode = 'translate';
+  preCapuredImage = null;
+  wasMainWindowVisible = false; // 不恢复主窗口 - 让用户专注于浮窗
+  return { success: true, overlayId, mode: capturedMode };
 });
 
 // 更新浮窗内容
@@ -704,10 +805,13 @@ app.whenReady().then(async () => {
   // 从配置文件读取快捷键
   const projectConfig = loadProjectConfig();
 
-  // 注册截图快捷键
+  // 注册截图快捷键（翻译模式）
   const captureHotkey = convertHotkeyToElectron(projectConfig.hotkey || 'Ctrl+Alt+Q');
   if (captureHotkey) {
-    const registered = globalShortcut.register(captureHotkey, () => {
+    const registered = globalShortcut.register(captureHotkey, async () => {
+      currentCaptureMode = 'translate';
+      // 先截取屏幕
+      await captureScreenBeforeSnipping();
       if (snippingWindow && !snippingWindow.isDestroyed() && !snippingWindow.isVisible()) {
         snippingWindow.show();
         snippingWindow.focus();
@@ -717,6 +821,25 @@ app.whenReady().then(async () => {
       console.log('Registered capture hotkey:', captureHotkey);
     } else {
       console.warn('Failed to register capture hotkey:', captureHotkey);
+    }
+  }
+
+  // 注册QA模式快捷键
+  const qaHotkey = convertHotkeyToElectron(projectConfig.qa_hotkey || 'Ctrl+Alt+W');
+  if (qaHotkey) {
+    const registered = globalShortcut.register(qaHotkey, async () => {
+      currentCaptureMode = 'qa';
+      // 先截取屏幕
+      await captureScreenBeforeSnipping();
+      if (snippingWindow && !snippingWindow.isDestroyed() && !snippingWindow.isVisible()) {
+        snippingWindow.show();
+        snippingWindow.focus();
+      }
+    });
+    if (registered) {
+      console.log('Registered QA hotkey:', qaHotkey);
+    } else {
+      console.warn('Failed to register QA hotkey:', qaHotkey);
     }
   }
 

@@ -4,6 +4,7 @@
 """
 
 import os
+import sys
 import json
 import logging
 import threading
@@ -15,8 +16,22 @@ from .translate_service import load_translate_model
 
 logger = logging.getLogger(__name__)
 
-# 项目根目录
-SCRIPT_DIR = Path(__file__).resolve().parents[2]
+# 检测是否为 PyInstaller 打包环境
+def get_project_root() -> Path:
+    """获取项目根目录，支持打包和开发两种环境"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后：可执行文件所在目录的父目录（resources 目录）
+        # 或者使用工作目录
+        base_path = Path(sys.executable).parent
+        # 检查是否在 Electron 打包环境中（资源在上一级）
+        if (base_path.parent / 'config.json').exists():
+            return base_path.parent
+        return base_path
+    else:
+        # 开发环境：scripts/server/ -> scripts -> project_root
+        return Path(__file__).resolve().parents[2]
+
+SCRIPT_DIR = get_project_root()
 
 
 class ServiceState:

@@ -12,6 +12,11 @@ API 端点：
 - POST /analyze         - LLM 语法分析
 - GET  /logs            - 获取服务日志
 - GET  /logs/stream     - 流式获取日志
+- GET  /notebook/dates  - 获取有记录的日期列表
+- GET  /notebook/records - 获取某天的记录
+- POST /notebook/save   - 保存记录
+- PUT  /notebook/record/{id} - 更新记录
+- DELETE /notebook/record/{id} - 删除记录
 """
 
 import os
@@ -44,10 +49,14 @@ from server import (
     normalize_lang, is_chinese, get_ocr_lang, get_llm_lang_name,
     OcrRequest, OcrResponse, TranslateRequest, TranslateResponse,
     ModelsResponse, DownloadModelRequest, PreloadRequest, AnalyzeRequest,
+    NotebookSaveRequest, NotebookUpdateRequest,
+    QASaveRequest, QAAskRequest,
     STATE, SCRIPT_DIR,
     do_ocr, extract_ocr_text,
     build_prompt, load_translate_model,
     LLMClient, ANALYZE_PROMPT_TEMPLATE,
+    QA_SYSTEM_PROMPT, QA_USER_PROMPT, format_qa_history,
+    notebook_service,
 )
 
 # 设置日志
@@ -765,6 +774,191 @@ def clear_logs():
     LOG_BUFFER.buffer.clear()
     LOG_BUFFER._last_id = 0
     return {"status": "ok"}
+
+
+# ============== 笔记本 API ==============
+
+@app.get("/notebook/dates")
+def get_notebook_dates():
+    """获取有记录的日期列表"""
+    try:
+        return notebook_service.get_dates_with_counts()
+    except Exception as e:
+        logger.error(f"获取日期列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/notebook/records")
+def get_notebook_records(date: str):
+    """获取指定日期的记录列表"""
+    try:
+        records = notebook_service.get_records_by_date(date)
+        return {"records": records}
+    except Exception as e:
+        logger.error(f"获取记录列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/notebook/record/{record_id}")
+def get_notebook_record(record_id: int):
+    """获取单条记录"""
+    try:
+        record = notebook_service.get_record(record_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="记录不存在")
+        return record
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/notebook/save")
+def save_notebook_record(req: NotebookSaveRequest):
+    """保存新记录"""
+    try:
+        result = notebook_service.save_record(
+            ocr_text=req.ocr_text,
+            translated_text=req.translated_text,
+            analysis_text=req.analysis_text,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang
+        )
+        return result
+    except Exception as e:
+        logger.error(f"保存记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/notebook/record/{record_id}")
+def update_notebook_record(record_id: int, req: NotebookUpdateRequest):
+    """更新记录（添加分析结果）"""
+    try:
+        success = notebook_service.update_record(
+            record_id=record_id,
+            analysis_text=req.analysis_text
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail="记录不存在")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/notebook/record/{record_id}")
+def delete_notebook_record(record_id: int):
+    """删除单条记录"""
+    try:
+        success = notebook_service.delete_record(record_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="记录不存在")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/notebook/date/{date}")
+def delete_notebook_date(date: str):
+    """删除指定日期的所有记录"""
+    try:
+        deleted_count = notebook_service.delete_records_by_date(date)
+        return {"success": True, "deleted_count": deleted_count}
+    except Exception as e:
+        logger.error(f"删除日期记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== QA 模式 API ==============
+
+
+@app.post("/qa/save")
+def save_qa_record(req: QASaveRequest):
+    """保存新的QA记录（OCR完成后立即调用）"""
+    try:
+        result = notebook_service.save_qa_record(
+            ocr_text=req.ocr_text,
+            source_lang=req.source_lang,
+            target_lang=req.target_lang
+        )
+        return result
+    except Exception as e:
+        logger.error(f"保存QA记录失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/qa/history/{record_id}")
+def get_qa_history(record_id: int):
+    """获取某条记录的QA对话历史"""
+    try:
+        qa_list = notebook_service.get_qa_history(record_id)
+        return {"record_id": record_id, "qa_list": qa_list}
+    except Exception as e:
+        logger.error(f"获取QA历史失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/qa/ask")
+async def ask_question(req: QAAskRequest):
+    """提交问题，流式返回答案"""
+    config = STATE._load_config()
+    llm_config = config.get("llm", {})
+    api_key = llm_config.get("api_key")
+    base_url = llm_config.get("base_url")
+    model = llm_config.get("model")
+
+    if not all([api_key, base_url, model]):
+        raise HTTPException(status_code=400, detail="LLM 未配置，请在设置中配置 llm.api_key, llm.base_url, llm.model")
+
+    # 获取已有的QA历史
+    qa_history = notebook_service.get_qa_history(req.record_id)
+    history_section = format_qa_history(qa_history)
+
+    # 构建prompt
+    source_lang_name = get_llm_lang_name(req.source_lang)
+    target_lang_name = get_llm_lang_name(req.target_lang)
+
+    system_prompt = QA_SYSTEM_PROMPT.format(target_lang_name=target_lang_name)
+    user_prompt = QA_USER_PROMPT.format(
+        source_lang_name=source_lang_name,
+        ocr_text=req.ocr_text,
+        history_section=history_section,
+        question=req.question
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    async def generate():
+        answer_text = ""
+        try:
+            client = LLMClient(api_key, base_url, model)
+            async for chunk in client.stream_chat(messages):
+                if "content" in chunk:
+                    token = chunk["content"]
+                    answer_text += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                if chunk.get("finish_reason"):
+                    break
+
+            # 保存这轮QA到数据库
+            if answer_text.strip():
+                notebook_service.append_qa_pair(req.record_id, req.question, answer_text)
+
+            yield f"data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"QA流式请求失败: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ============== 入口 ==============

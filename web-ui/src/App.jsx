@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { Snipper, Dashboard, SettingsPage, LogPage, FloatingOverlay } from './components';
+import { Snipper, Dashboard, SettingsPage, LogPage, FloatingOverlay, NotebookPage } from './components';
 import { getLangName } from './constants';
 
 /**
@@ -16,6 +16,7 @@ const App = () => {
   const [status, setStatus] = useState('checking');
   const [showSettings, setShowSettings] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const [showNotebook, setShowNotebook] = useState(false);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [loadedModels, setLoadedModels] = useState(new Set());
@@ -151,17 +152,23 @@ const App = () => {
     }
   }, [loadedModels, preloadModel]);
 
-  // 裁剪图片
-  const cropImage = (imageDataUrl, bounds) => {
+  // 裁剪图片（考虑 DPI 缩放）
+  const cropImage = (imageDataUrl, bounds, scaleFactor = 1) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
         try {
+          // 使用缩放后的坐标
+          const sx = Math.floor(bounds.x * scaleFactor);
+          const sy = Math.floor(bounds.y * scaleFactor);
+          const sw = Math.floor(bounds.width * scaleFactor);
+          const sh = Math.floor(bounds.height * scaleFactor);
+
           const canvas = document.createElement('canvas');
-          canvas.width = bounds.width;
-          canvas.height = bounds.height;
+          canvas.width = sw;
+          canvas.height = sh;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
           resolve(canvas.toDataURL('image/png'));
         } catch (e) {
           reject(e);
@@ -179,11 +186,12 @@ const App = () => {
     const overlayId = data.overlayId;
 
     console.log('[Capture] Processing started, overlayId:', overlayId);
+    console.log('[Capture] Received data.mode:', data.mode);
     window.electron.updateOverlay({ overlayId, status: 'ocr', text: '' });
 
     try {
       console.log('[Capture] Cropping image...');
-      const croppedImage = await cropImage(data.image, data.bounds);
+      const croppedImage = await cropImage(data.image, data.bounds, data.scaleFactor || 1);
       console.log('[Capture] Image cropped, calling OCR...');
 
       let ocrRes;
@@ -242,6 +250,40 @@ const App = () => {
         return;
       }
 
+      // QA 模式：OCR 完成后直接显示，不翻译
+      console.log('[Capture] Checking mode for QA:', data.mode, 'Is QA?:', data.mode === 'qa');
+      if (data.mode === 'qa') {
+        let recordId = null;
+        try {
+          const saveRes = await fetch(`${currentBaseUrl}/qa/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ocr_text: ocrText,
+              source_lang: currentConfig.source_lang,
+              target_lang: currentConfig.target_lang
+            })
+          });
+          if (saveRes.ok) {
+            const saveData = await saveRes.json();
+            recordId = saveData.id;
+            console.log('[QA] Record saved:', recordId);
+          }
+        } catch (saveErr) {
+          console.warn('[QA] Failed to save record:', saveErr.message);
+        }
+        window.electron.updateOverlay({
+          overlayId,
+          status: 'done',
+          text: ocrText,
+          ocrText,
+          recordId,
+          mode: 'qa'
+        });
+        return;
+      }
+
+      // 翻译模式：继续翻译流程
       window.electron.updateOverlay({ overlayId, status: 'translating', text: '' });
       console.log('[Capture] Translating (stream)...');
 
@@ -335,7 +377,30 @@ const App = () => {
       }
 
       console.log('[Capture] Translation done');
-      window.electron.updateOverlay({ overlayId, status: 'done', text: translatedText, ocrText });
+
+      // 保存到笔记本
+      let recordId = null;
+      try {
+        const saveRes = await fetch(`${currentBaseUrl}/notebook/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ocr_text: ocrText,
+            translated_text: translatedText,
+            source_lang: currentConfig.source_lang,
+            target_lang: currentConfig.target_lang
+          })
+        });
+        if (saveRes.ok) {
+          const saveData = await saveRes.json();
+          recordId = saveData.id;
+          console.log('[Notebook] Record saved:', recordId);
+        }
+      } catch (saveErr) {
+        console.warn('[Notebook] Failed to save record:', saveErr.message);
+      }
+
+      window.electron.updateOverlay({ overlayId, status: 'done', text: translatedText, ocrText, recordId });
     } catch (err) {
       console.error('[Capture] Error:', err);
       window.electron.updateOverlay({ overlayId, status: 'error', text: err.response?.data?.detail || err.message });
@@ -424,6 +489,16 @@ const App = () => {
     );
   }
 
+  // 笔记本页面
+  if (showNotebook) {
+    return (
+      <NotebookPage
+        onBack={() => setShowNotebook(false)}
+        baseUrl={baseUrl}
+      />
+    );
+  }
+
   // 主页面
   return (
     <Dashboard
@@ -435,6 +510,7 @@ const App = () => {
       loadingStatus={loadingStatus}
       onOpenSettings={() => setShowSettings(true)}
       onOpenLogs={() => setShowLogs(true)}
+      onOpenNotebook={() => setShowNotebook(true)}
       isModelLoading={isModelLoading}
       loadingMessage={loadingMessage}
     />

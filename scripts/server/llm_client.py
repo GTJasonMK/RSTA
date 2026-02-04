@@ -161,3 +161,30 @@ ANALYZE_PROMPT_TEMPLATE = """请分析以下{source_lang_name}文本的语法结
 【学习要点】
 总结这段文本中值得学习的语言点。
 """
+
+
+# QA 模式提示模板
+QA_SYSTEM_PROMPT = """你是一个专业的语言学习助手。用户会给你一段文本，然后向你提问关于这段文本的问题。
+请用{target_lang_name}回答问题，解释要清晰易懂。
+如果问题涉及语法、词汇或句子结构，请详细解释。
+如果用户的问题与文本无关，请友好地引导回文本相关的话题。"""
+
+
+QA_USER_PROMPT = """原文（{source_lang_name}）：
+{ocr_text}
+
+{history_section}用户问题：{question}
+"""
+
+
+def format_qa_history(qa_list: list) -> str:
+    """格式化QA历史为可读文本"""
+    if not qa_list:
+        return ""
+
+    lines = ["之前的对话："]
+    for i, qa in enumerate(qa_list[-5:], 1):  # 只取最近5轮
+        lines.append(f"Q{i}: {qa.get('q', '')}")
+        lines.append(f"A{i}: {qa.get('a', '')}")
+    lines.append("")  # 空行分隔
+    return "\n".join(lines)

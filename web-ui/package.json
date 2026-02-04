@@ -1,12 +1,41 @@
 {
-  "name": "realtime-screen-translation-web",
+  "name": "realtime-screen-translation",
   "version": "1.0.0",
+  "description": "Realtime Screen Translation - OCR and translation tool",
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.rsta.realtime-screen-translation",
+    "productName": "RealtimeScreenTranslation",
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../config.json",
+        "to": "config.json"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
@@ -21,6 +50,7 @@
     "axios": "^1.6.8",
     "lucide-react": "^0.378.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^4.5.9"
   }
 }
