@@ -19,7 +19,6 @@ ROOT_DIR = Path(__file__).resolve().parent
 WEB_UI_DIR = ROOT_DIR / "web-ui"
 SCRIPTS_DIR = ROOT_DIR / "scripts"
 VENV_DIR = ROOT_DIR / ".venv-hymt-gguf"
-DIST_DIR = WEB_UI_DIR / "dist"
 
 # 配置
 BACKEND_PORT = 8092
@@ -176,13 +175,8 @@ def wait_for_backend(timeout=30):
 
 
 def build_frontend():
-    """构建前端（如果 dist 不存在）"""
-    if DIST_DIR.exists() and (DIST_DIR / "index.html").exists():
-        log("前端已构建，跳过构建步骤")
-        return True
-
-    log("首次运行，正在构建前端...")
-    log("（这可能需要一些时间，后续启动会很快）")
+    """构建前端（生产模式每次都重新构建）"""
+    log("正在构建前端...")
 
     result = subprocess.run(
         ["npm", "run", "build"],

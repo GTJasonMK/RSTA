@@ -175,17 +175,37 @@ def get_record(record_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_records_by_date(date_key: str) -> List[Dict[str, Any]]:
-    """获取指定日期的所有记录"""
+def get_records_by_date(date_key: str = None, mode: str = None) -> List[Dict[str, Any]]:
+    """获取记录，可按日期和 mode 过滤
+
+    Args:
+        date_key: 可选，日期字符串，为 None 时返回所有日期的记录
+        mode: 可选，'translate' 或 'qa'，为 None 时返回全部
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('''
+
+        # 构建查询条件
+        conditions = []
+        params = []
+        if date_key:
+            conditions.append("date_key = ?")
+            params.append(date_key)
+        if mode:
+            conditions.append("mode = ?")
+            params.append(mode)
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        cursor.execute(f'''
             SELECT id, created_at, date_key, ocr_text, translated_text,
                    analysis_text, source_lang, target_lang, mode, qa_history
             FROM translation_records
-            WHERE date_key = ?
+            {where_clause}
             ORDER BY created_at DESC
-        ''', (date_key,))
+        ''', params)
         rows = cursor.fetchall()
 
     records = []
@@ -204,20 +224,32 @@ def get_records_by_date(date_key: str) -> List[Dict[str, Any]]:
     return records
 
 
-def get_dates_with_counts() -> Dict[str, Any]:
+def get_dates_with_counts(mode: str = None) -> Dict[str, Any]:
     """获取所有有记录的日期及其记录数
+
+    Args:
+        mode: 可选，'translate' 或 'qa'，为 None 时统计全部
 
     Returns:
         { "dates": ["2024-02-04", ...], "counts": {"2024-02-04": 5, ...} }
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT date_key, COUNT(*) as count
-            FROM translation_records
-            GROUP BY date_key
-            ORDER BY date_key DESC
-        ''')
+        if mode:
+            cursor.execute('''
+                SELECT date_key, COUNT(*) as count
+                FROM translation_records
+                WHERE mode = ?
+                GROUP BY date_key
+                ORDER BY date_key DESC
+            ''', (mode,))
+        else:
+            cursor.execute('''
+                SELECT date_key, COUNT(*) as count
+                FROM translation_records
+                GROUP BY date_key
+                ORDER BY date_key DESC
+            ''')
         rows = cursor.fetchall()
 
     dates = []

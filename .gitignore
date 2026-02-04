@@ -95,6 +95,10 @@ desktop.ini
 # Project specific
 # =========================
 
+# Runtime data (SQLite database)
+data/
+!data/.gitkeep
+
 # Models (large binary files)
 models/
 !models/.gitkeep
@@ -127,6 +131,9 @@ verification.md
 .env.local
 .env.*.local
 *.env
+
+# User config (use config.example.json as template)
+config.json
 
 # =========================
 # Certificates and keys

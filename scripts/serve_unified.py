@@ -779,20 +779,20 @@ def clear_logs():
 # ============== 笔记本 API ==============
 
 @app.get("/notebook/dates")
-def get_notebook_dates():
-    """获取有记录的日期列表"""
+def get_notebook_dates(mode: str = None):
+    """获取有记录的日期列表，可按 mode 过滤"""
     try:
-        return notebook_service.get_dates_with_counts()
+        return notebook_service.get_dates_with_counts(mode)
     except Exception as e:
         logger.error(f"获取日期列表失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/notebook/records")
-def get_notebook_records(date: str):
-    """获取指定日期的记录列表"""
+def get_notebook_records(date: str = None, mode: str = None):
+    """获取记录列表，可按日期和 mode 过滤"""
     try:
-        records = notebook_service.get_records_by_date(date)
+        records = notebook_service.get_records_by_date(date, mode)
         return {"records": records}
     except Exception as e:
         logger.error(f"获取记录列表失败: {e}")
