@@ -5,27 +5,17 @@ import SimpleMarkdown from './SimpleMarkdown';
 
 /**
  * 笔记本页面组件
- * 左侧显示记录列表，右侧显示记录详情
- * 支持翻译/QA模式切换和日期筛选
  */
 const NotebookPage = ({ onBack, baseUrl }) => {
-  // 模式切换状态
-  const [selectedMode, setSelectedMode] = useState('translate'); // 'translate' 或 'qa'
-
-  // 日期筛选状态
-  const [dates, setDates] = useState([]); // 可选的日期列表
-  const [selectedDate, setSelectedDate] = useState(''); // 空字符串表示全部日期
+  const [selectedMode, setSelectedMode] = useState('translate');
+  const [dates, setDates] = useState([]);
+  const [selectedDate, setSelectedDate] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
-
-  // 记录列表相关状态
   const [records, setRecords] = useState([]);
   const [selectedRecordId, setSelectedRecordId] = useState(null);
-
-  // 加载状态
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // 获取日期列表（用于筛选下拉框）
   const fetchDates = useCallback(async () => {
     try {
       const res = await fetch(`${baseUrl}/notebook/dates?mode=${selectedMode}`);
@@ -37,7 +27,6 @@ const NotebookPage = ({ onBack, baseUrl }) => {
     }
   }, [baseUrl, selectedMode]);
 
-  // 获取记录列表
   const fetchRecords = useCallback(async () => {
     setLoading(true);
     try {
@@ -49,7 +38,6 @@ const NotebookPage = ({ onBack, baseUrl }) => {
       if (!res.ok) throw new Error('Failed to fetch records');
       const data = await res.json();
       setRecords(data.records || []);
-      // 默认选中第一条记录
       if (data.records?.length > 0) {
         setSelectedRecordId(data.records[0].id);
       } else {
@@ -62,38 +50,32 @@ const NotebookPage = ({ onBack, baseUrl }) => {
     }
   }, [baseUrl, selectedMode, selectedDate]);
 
-  // 模式变化时重新获取日期和记录
   useEffect(() => {
-    setSelectedDate(''); // 切换模式时重置日期筛选
+    setSelectedDate('');
     fetchDates();
   }, [selectedMode, fetchDates]);
 
-  // 日期或模式变化时获取记录
   useEffect(() => {
     fetchRecords();
   }, [fetchRecords]);
 
-  // 删除记录
   const handleDeleteRecord = async (recordId, e) => {
     e.stopPropagation();
-    if (!window.confirm('确定要删除这条记录吗？')) return;
+    if (!window.confirm('Delete this record?')) return;
     try {
       const res = await fetch(`${baseUrl}/notebook/record/${recordId}`, {
         method: 'DELETE'
       });
       if (!res.ok) throw new Error('Failed to delete record');
-      // 刷新记录列表和日期
       await fetchRecords();
       await fetchDates();
     } catch (err) {
-      alert('删除失败: ' + err.message);
+      alert('Delete failed: ' + err.message);
     }
   };
 
-  // 当前选中的记录
   const currentRecord = records.find(r => r.id === selectedRecordId);
 
-  // 格式化时间显示
   const formatTime = (isoString) => {
     if (!isoString) return '';
     try {
@@ -104,7 +86,6 @@ const NotebookPage = ({ onBack, baseUrl }) => {
     }
   };
 
-  // 格式化日期显示
   const formatDate = (isoString) => {
     if (!isoString) return '';
     try {
@@ -115,7 +96,6 @@ const NotebookPage = ({ onBack, baseUrl }) => {
     }
   };
 
-  // 截取文本预览
   const getPreview = (text, maxLen = 50) => {
     if (!text) return '';
     const cleaned = text.replace(/\s+/g, ' ').trim();
@@ -123,22 +103,22 @@ const NotebookPage = ({ onBack, baseUrl }) => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#FAFAF9] text-stone-900 overflow-hidden">
+    <div className="flex flex-col h-screen bg-surface text-stone-900 overflow-hidden">
       {/* Header */}
-      <div className="h-10 bg-white border-b border-stone-200 flex items-center justify-between px-3 drag-region">
-        <div className="flex items-center gap-3 no-drag">
+      <div className="h-11 bg-white/80 backdrop-blur-sm border-b border-stone-100 flex items-center justify-between px-4 drag-region">
+        <div className="flex items-center gap-4 no-drag">
           <button
             onClick={onBack}
-            className="p-1.5 hover:bg-stone-100 rounded text-stone-400 hover:text-stone-600"
+            className="p-1.5 hover:bg-stone-100 rounded-lg text-stone-400 hover:text-stone-600 transition-colors"
           >
             <ArrowLeft size={16} />
           </button>
 
-          {/* 模式切换 Tab */}
-          <div className="flex items-center bg-stone-100 rounded-md p-0.5">
+          {/* Mode Toggle */}
+          <div className="flex items-center bg-stone-100 rounded-lg p-0.5">
             <button
               onClick={() => setSelectedMode('translate')}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 selectedMode === 'translate'
                   ? 'bg-white text-amber-600 shadow-sm'
                   : 'text-stone-500 hover:text-stone-700'
@@ -149,9 +129,9 @@ const NotebookPage = ({ onBack, baseUrl }) => {
             </button>
             <button
               onClick={() => setSelectedMode('qa')}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 selectedMode === 'qa'
-                  ? 'bg-white text-purple-600 shadow-sm'
+                  ? 'bg-white text-violet-600 shadow-sm'
                   : 'text-stone-500 hover:text-stone-700'
               }`}
             >
@@ -160,32 +140,32 @@ const NotebookPage = ({ onBack, baseUrl }) => {
             </button>
           </div>
 
-          {/* 日期筛选下拉框 */}
+          {/* Date Filter */}
           <div className="relative">
             <button
               onClick={() => setShowDatePicker(!showDatePicker)}
-              className="flex items-center gap-1 px-2 py-1 text-xs text-stone-600 hover:bg-stone-100 rounded border border-stone-200"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-stone-500 hover:bg-stone-100 rounded-lg transition-colors"
             >
               <Calendar size={12} />
-              <span>{selectedDate || '全部日期'}</span>
+              <span>{selectedDate || 'All Dates'}</span>
               <ChevronDown size={12} />
             </button>
             {showDatePicker && (
-              <div className="absolute top-full left-0 mt-1 bg-white border border-stone-200 rounded-md shadow-lg z-50 min-w-[120px] max-h-[300px] overflow-y-auto">
+              <div className="absolute top-full left-0 mt-1 bg-white border border-stone-100 rounded-xl shadow-elevated z-50 min-w-[120px] max-h-[280px] overflow-y-auto py-1">
                 <button
                   onClick={() => { setSelectedDate(''); setShowDatePicker(false); }}
-                  className={`w-full px-3 py-1.5 text-left text-xs hover:bg-stone-50 ${
-                    !selectedDate ? 'bg-stone-100 text-amber-600' : 'text-stone-600'
+                  className={`w-full px-3 py-2 text-left text-xs hover:bg-stone-50 transition-colors ${
+                    !selectedDate ? 'text-amber-600 font-medium' : 'text-stone-600'
                   }`}
                 >
-                  全部日期
+                  All Dates
                 </button>
                 {dates.map(date => (
                   <button
                     key={date}
                     onClick={() => { setSelectedDate(date); setShowDatePicker(false); }}
-                    className={`w-full px-3 py-1.5 text-left text-xs hover:bg-stone-50 ${
-                      selectedDate === date ? 'bg-stone-100 text-amber-600' : 'text-stone-600'
+                    className={`w-full px-3 py-2 text-left text-xs hover:bg-stone-50 transition-colors ${
+                      selectedDate === date ? 'text-amber-600 font-medium' : 'text-stone-600'
                     }`}
                   >
                     {date}
@@ -195,134 +175,129 @@ const NotebookPage = ({ onBack, baseUrl }) => {
             )}
           </div>
 
-          {/* 记录数量 */}
           <span className="text-xs text-stone-400">
-            {records.length} 条记录
+            {records.length} records
           </span>
         </div>
       </div>
 
-      {/* 点击其他地方关闭日期选择器 */}
+      {/* Click outside to close date picker */}
       {showDatePicker && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShowDatePicker(false)}
-        />
+        <div className="fixed inset-0 z-40" onClick={() => setShowDatePicker(false)} />
       )}
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 左侧记录列表 */}
-        <div className="w-64 border-r border-stone-200 bg-white overflow-y-auto">
+        {/* Left: Record List */}
+        <div className="w-60 border-r border-stone-100 bg-white/50 overflow-y-auto">
           {loading ? (
-            <div className="p-4 text-xs text-stone-400">加载中...</div>
+            <div className="p-4 text-xs text-stone-400">Loading...</div>
           ) : records.length === 0 ? (
-            <div className="p-4 text-xs text-stone-400 text-center">
-              <FileText size={32} className="mx-auto mb-2 opacity-30" />
-              <div>暂无记录</div>
+            <div className="p-6 text-center">
+              <FileText size={32} className="mx-auto mb-2 text-stone-200" />
+              <div className="text-xs text-stone-400">No records</div>
             </div>
           ) : (
-            records.map((record) => (
-              <div
-                key={record.id}
-                onClick={() => setSelectedRecordId(record.id)}
-                className={`p-3 border-b border-stone-100 cursor-pointer hover:bg-stone-50 group ${
-                  selectedRecordId === record.id ? 'bg-amber-50 border-l-2 border-l-amber-400' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs text-stone-400">
-                    {!selectedDate && (
-                      <span>{formatDate(record.created_at)}</span>
-                    )}
-                    <span>{formatTime(record.created_at)}</span>
+            <div className="p-2 space-y-1">
+              {records.map((record) => (
+                <div
+                  key={record.id}
+                  onClick={() => setSelectedRecordId(record.id)}
+                  className={`p-3 rounded-xl cursor-pointer group transition-colors ${
+                    selectedRecordId === record.id
+                      ? 'bg-amber-50 border border-amber-200'
+                      : 'hover:bg-stone-50 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-stone-400">
+                      {!selectedDate && <span>{formatDate(record.created_at)}</span>}
+                      <span>{formatTime(record.created_at)}</span>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteRecord(record.id, e)}
+                      className="p-1 text-stone-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                      title="Delete"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </div>
-                  <button
-                    onClick={(e) => handleDeleteRecord(record.id, e)}
-                    className="p-1 text-stone-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="删除"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <div className="text-xs text-stone-600 line-clamp-2 leading-relaxed">
+                    {getPreview(record.ocr_text, 80)}
+                  </div>
+                  {selectedMode === 'translate' && record.translated_text && (
+                    <div className="text-[10px] text-stone-400 mt-1.5 line-clamp-1">
+                      {getPreview(record.translated_text, 40)}
+                    </div>
+                  )}
+                  {selectedMode === 'qa' && record.qa_history?.length > 0 && (
+                    <div className="text-[10px] text-violet-500 mt-1.5">
+                      {record.qa_history.length} conversations
+                    </div>
+                  )}
                 </div>
-                <div className="text-xs text-stone-600 line-clamp-2">
-                  {getPreview(record.ocr_text, 80)}
-                </div>
-                {selectedMode === 'translate' && record.translated_text && (
-                  <div className="text-xs text-stone-400 mt-1 line-clamp-1">
-                    → {getPreview(record.translated_text, 40)}
-                  </div>
-                )}
-                {selectedMode === 'qa' && record.qa_history?.length > 0 && (
-                  <div className="text-xs text-purple-400 mt-1">
-                    {record.qa_history.length} 轮对话
-                  </div>
-                )}
-              </div>
-            ))
+              ))}
+            </div>
           )}
         </div>
 
-        {/* 右侧内容区域 */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Right: Content Area */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
           {error ? (
-            <div className="flex-1 flex items-center justify-center text-red-500">
+            <div className="flex-1 flex items-center justify-center text-red-500 text-sm">
               {error}
             </div>
           ) : !currentRecord ? (
-            <div className="flex-1 flex items-center justify-center text-stone-400">
+            <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <FileText size={48} className="mx-auto mb-2 opacity-30" />
-                <div>选择一条记录查看详情</div>
+                <FileText size={40} className="mx-auto mb-3 text-stone-200" />
+                <div className="text-sm text-stone-400">Select a record to view</div>
               </div>
             </div>
           ) : (
             <>
-              {/* 记录信息标签 */}
-              <div className="px-4 py-2 bg-stone-50 border-b border-stone-200 text-xs text-stone-500 flex items-center gap-2">
-                <span>{currentRecord.date_key}</span>
+              {/* Record Info Bar */}
+              <div className="px-5 py-2.5 bg-stone-50/50 border-b border-stone-100 text-xs text-stone-400 flex items-center gap-3">
+                <span className="font-medium text-stone-500">{currentRecord.date_key}</span>
                 <span>{formatTime(currentRecord.created_at)}</span>
                 {currentRecord.source_lang && currentRecord.target_lang && (
-                  <span className="text-stone-400">
-                    {currentRecord.source_lang.toUpperCase()} → {currentRecord.target_lang.toUpperCase()}
-                  </span>
+                  <>
+                    <span className="w-px h-3 bg-stone-200" />
+                    <span>{currentRecord.source_lang.toUpperCase()} → {currentRecord.target_lang.toUpperCase()}</span>
+                  </>
                 )}
               </div>
 
-              {/* 根据模式显示不同布局 */}
+              {/* Content based on mode */}
               {selectedMode === 'qa' ? (
-                /* QA模式布局：纵向滚动 */
-                <div className="flex-1 overflow-y-auto bg-white p-4 space-y-4">
-                  {/* OCR原文卡片 */}
-                  <div className="rounded-lg border border-purple-200 bg-purple-50/30">
-                    <div className="px-3 py-2 border-b border-purple-200 text-xs font-bold text-purple-500 uppercase tracking-wider">
+                /* QA Mode: Vertical scroll */
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  {/* OCR Card */}
+                  <div className="rounded-xl border border-violet-100 bg-violet-50/30">
+                    <div className="px-4 py-2.5 border-b border-violet-100 text-xs font-medium text-violet-500 uppercase tracking-wider">
                       Original (OCR)
                     </div>
-                    <div className="p-3 text-sm text-stone-700 whitespace-pre-wrap">
+                    <div className="p-4 text-sm text-stone-700 whitespace-pre-wrap leading-relaxed">
                       {currentRecord.ocr_text || <span className="text-stone-400 italic">No OCR text</span>}
                     </div>
                   </div>
 
-                  {/* QA对话历史 */}
+                  {/* QA History */}
                   {(() => {
-                    const qaList = Array.isArray(currentRecord.qa_history)
-                      ? currentRecord.qa_history
-                      : [];
+                    const qaList = Array.isArray(currentRecord.qa_history) ? currentRecord.qa_history : [];
                     if (qaList.length === 0) {
                       return (
-                        <div className="text-stone-400 italic text-sm text-center py-8">
+                        <div className="text-stone-400 text-sm text-center py-10">
                           No Q&A history
                         </div>
                       );
                     }
                     return qaList.map((qa, idx) => (
-                      <div key={idx} className="rounded-lg border border-stone-200">
-                        {/* 问题 */}
-                        <div className="px-3 py-2 bg-purple-50 border-b border-stone-200 text-sm font-medium text-purple-700">
+                      <div key={idx} className="rounded-xl border border-stone-100 overflow-hidden">
+                        <div className="px-4 py-2.5 bg-violet-50 text-sm font-medium text-violet-700">
                           Q{idx + 1}: {qa.q}
                         </div>
-                        {/* 回答 */}
-                        <div className="p-3 text-sm text-stone-700">
+                        <div className="p-4 text-sm text-stone-700 leading-relaxed">
                           <SimpleMarkdown content={qa.a} />
                         </div>
                       </div>
@@ -330,42 +305,42 @@ const NotebookPage = ({ onBack, baseUrl }) => {
                   })()}
                 </div>
               ) : (
-                /* 翻译模式布局 */
+                /* Translate Mode */
                 <PanelGroup direction="horizontal" className="flex-1">
-                  {/* 左侧：OCR + 翻译（上下分栏） */}
+                  {/* Left: OCR + Translation (vertical) */}
                   <Panel defaultSize={50} minSize={20}>
                     <div className="h-full flex flex-col">
-                      {/* 上方：OCR 原文 */}
-                      <div className="flex-1 flex flex-col bg-white border-b border-stone-200 min-h-0">
-                        <div className="px-3 py-2 border-b border-stone-100 text-xs font-bold text-amber-500 uppercase tracking-wider flex-shrink-0">
+                      {/* OCR */}
+                      <div className="flex-1 flex flex-col border-b border-stone-100 min-h-0">
+                        <div className="px-4 py-2.5 border-b border-stone-50 text-xs font-medium text-amber-500 uppercase tracking-wider flex-shrink-0">
                           Original (OCR)
                         </div>
-                        <div className="flex-1 p-3 overflow-y-auto text-sm text-stone-700 whitespace-pre-wrap">
+                        <div className="flex-1 p-4 overflow-y-auto text-sm text-stone-700 whitespace-pre-wrap leading-relaxed">
                           {currentRecord.ocr_text || <span className="text-stone-400 italic">No OCR text</span>}
                         </div>
                       </div>
 
-                      {/* 下方：翻译结果 */}
-                      <div className="flex-1 flex flex-col bg-white min-h-0">
-                        <div className="px-3 py-2 border-b border-stone-100 text-xs font-bold text-amber-500 uppercase tracking-wider flex-shrink-0">
+                      {/* Translation */}
+                      <div className="flex-1 flex flex-col min-h-0">
+                        <div className="px-4 py-2.5 border-b border-stone-50 text-xs font-medium text-amber-500 uppercase tracking-wider flex-shrink-0">
                           Translation
                         </div>
-                        <div className="flex-1 p-3 overflow-y-auto text-sm text-stone-700 whitespace-pre-wrap">
+                        <div className="flex-1 p-4 overflow-y-auto text-sm text-stone-700 whitespace-pre-wrap leading-relaxed">
                           {currentRecord.translated_text || <span className="text-stone-400 italic">No translation</span>}
                         </div>
                       </div>
                     </div>
                   </Panel>
 
-                  <PanelResizeHandle className="w-1 bg-stone-200 hover:bg-amber-400 transition-colors cursor-col-resize" />
+                  <PanelResizeHandle className="w-px bg-stone-100 hover:bg-amber-400 transition-colors cursor-col-resize" />
 
-                  {/* 右侧：分析结果 */}
+                  {/* Right: Analysis */}
                   <Panel defaultSize={50} minSize={20}>
-                    <div className="h-full flex flex-col bg-white">
-                      <div className="px-3 py-2 border-b border-stone-100 text-xs font-bold text-amber-500 uppercase tracking-wider">
+                    <div className="h-full flex flex-col">
+                      <div className="px-4 py-2.5 border-b border-stone-50 text-xs font-medium text-amber-500 uppercase tracking-wider">
                         Analysis
                       </div>
-                      <div className="flex-1 p-3 overflow-y-auto text-sm text-stone-700">
+                      <div className="flex-1 p-4 overflow-y-auto text-sm text-stone-700 leading-relaxed">
                         {currentRecord.analysis_text ? (
                           <SimpleMarkdown content={currentRecord.analysis_text} />
                         ) : (
