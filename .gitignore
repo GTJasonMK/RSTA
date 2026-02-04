@@ -118,11 +118,6 @@ logs/
 # Claude/Codex context files
 .codex/
 .claude/
-CLAUDE.md
-AGENTS.md
-
-# Verification and testing docs
-verification.md
 
 # =========================
 # Environment variables
